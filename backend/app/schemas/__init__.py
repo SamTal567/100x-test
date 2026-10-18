@@ -93,6 +93,19 @@ class MessageOut(BaseModel):
 
 # ── Turns ────────────────────────────────────────────────────────
 
+class TranscriptionSegment(BaseModel):
+    transcription_id: str = Field(min_length=1, max_length=100)
+    confirmed_text: str = Field(min_length=1, max_length=30000)
+    confirmation_scope: Literal["clip", "legacy_draft"] = "clip"
+
+    @field_validator("confirmed_text")
+    @classmethod
+    def nonempty_clip(cls, value):
+        if not value.strip():
+            raise ValueError("A reviewed transcript cannot be empty")
+        return value
+
+
 class TurnRequest(BaseModel):
     client_turn_id: str = Field(min_length=1, max_length=100)
     expected_version: int = Field(ge=1, le=2147483647)
@@ -108,8 +121,21 @@ class TurnRequest(BaseModel):
     cloze_state: Optional[dict] = None
     attachment_ids: list[str] = Field(default_factory=list, max_length=8)
     transcription_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    transcription_segments: list[TranscriptionSegment] = Field(default_factory=list, max_length=20)
     resource_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
     input_mode: Optional[Literal["typed", "voice"]] = "typed"
+
+    @model_validator(mode="after")
+    def validate_transcription_segments(self):
+        if self.transcription_segments:
+            ids = [segment.transcription_id for segment in self.transcription_segments]
+            if self.input_mode != "voice":
+                raise ValueError("Transcript clips require voice input mode")
+            if len(set(ids)) != len(ids):
+                raise ValueError("Each transcription can appear only once")
+            if self.transcription_id and self.transcription_id != ids[-1]:
+                raise ValueError("The primary transcription must match the last clip")
+        return self
 
 
 class TurnResponse(BaseModel):

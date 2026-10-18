@@ -114,6 +114,12 @@ export interface Message {
   provider_status?: 'complete' | 'unavailable' | 'error' | null
 }
 
+export interface TranscriptionSegment {
+  transcription_id: string
+  confirmed_text: string
+  confirmation_scope?: 'clip' | 'legacy_draft'
+}
+
 export interface TurnRequest {
   client_turn_id: string
   expected_version: number
@@ -138,6 +144,7 @@ export interface TurnRequest {
   cloze_state?: Record<string, unknown> | null
   attachment_ids?: string[]
   transcription_id?: string | null
+  transcription_segments?: TranscriptionSegment[]
   input_mode?: 'typed' | 'voice'
   resource_id?: string | null
   intervention_id?: string | null

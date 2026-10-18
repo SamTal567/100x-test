@@ -23,6 +23,68 @@ const { SessionTranscript } = require('../components/SessionTranscript.tsx')
 const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
+test('confirmed dictation appends to typed text and keeps all accepted clip references after reload', () => {
+  const { applyDictation } = require('../lib/dictation.ts')
+  const first = applyDictation({ text: 'Typed introduction.', diagram: null, cloze: null, inputMode: 'typed', transcriptionId: null }, 'Memory is temporary.', 'clip-1')
+  assert.equal(first.text, 'Typed introduction.\n\nMemory is temporary.')
+  const key = draftKey('voice-session', 'case', 'submit_answer')
+  writeStored(key, first)
+  const second = applyDictation(readStored(key), 'A saved file survives.', 'clip-2')
+  assert.equal(second.text, 'Typed introduction.\n\nMemory is temporary.\n\nA saved file survives.')
+  assert.deepEqual(second.transcriptionSegments.map(s => s.transcription_id), ['clip-1', 'clip-2'])
+  assert.deepEqual(second.transcriptionSegments.map(s => s.confirmed_text), ['Memory is temporary.', 'A saved file survives.'])
+  assert.equal(second.transcriptionId, 'clip-2')
+})
+
+test('explicit dictation replacement discards earlier active clips while append confirmation cannot duplicate a clip', () => {
+  const { applyDictation } = require('../lib/dictation.ts')
+  const first = applyDictation({ text: 'Original typed text', inputMode: 'typed', transcriptionId: null }, 'First clip', 'first')
+  assert.equal(applyDictation(first, 'First clip', 'first').text, 'Original typed text\n\nFirst clip')
+  const replacement = applyDictation(first, 'Replacement clip', 'second', 'replace')
+  assert.equal(replacement.text, 'Replacement clip')
+  assert.deepEqual(replacement.transcriptionSegments.map(s => s.transcription_id), ['second'])
+  assert.equal(first.text, 'Original typed text\n\nFirst clip')
+})
+
+test('adding to a legacy voice draft retains its source and identifies legacy confirmation scope', () => {
+  const { applyDictation } = require('../lib/dictation.ts')
+  const draft = applyDictation({ text: 'Earlier voice draft plus edits', inputMode: 'voice', transcriptionId: 'old' }, 'New words', 'new')
+  assert.equal(draft.text, 'Earlier voice draft plus edits\n\nNew words')
+  assert.equal(draft.transcriptionSegments[0].transcription_id, 'old')
+  assert.equal(draft.transcriptionSegments[0].confirmation_scope, 'legacy_draft')
+})
+
+test('dictating into a cleared answer starts a new clip set instead of retaining deleted recordings', () => {
+  const { applyDictation } = require('../lib/dictation.ts')
+  const cleared = { text: '', inputMode: 'voice', transcriptionId: 'deleted', transcriptionSegments: [{ transcription_id: 'deleted', confirmed_text: 'Deleted answer' }] }
+  const next = applyDictation(cleared, 'Fresh answer', 'fresh')
+  assert.equal(next.text, 'Fresh answer')
+  assert.deepEqual(next.transcriptionSegments.map(s => s.transcription_id), ['fresh'])
+})
+
+test('reviewed transcripts offer append and explicit replacement without answer submission', () => {
+  const { TranscriptReview } = require('../components/TranscriptReview.tsx')
+  const html = render(TranscriptReview, { existingText: 'Keep this answer', transcript: 'New clip', rawTranscript: 'New clip', onChange: () => {}, onConfirm: () => {}, onCancel: () => {}, onRecordAgain: () => {} })
+  assert.match(html, /Add to my answer/)
+  assert.match(html, /Replace my answer/)
+  assert.match(html, /Cancel/)
+  assert.doesNotMatch(html, /type="submit"/)
+})
+
+test('clearing then retyping drops discarded clips before typed submission or further dictation', () => {
+  const { applyDictation, editDraftText } = require('../lib/dictation.ts')
+  const original = applyDictation({ text: '', inputMode: 'typed', transcriptionId: null }, 'Discard this clip', 'discarded')
+  const cleared = editDraftText(original, '   ')
+  const retyped = editDraftText(cleared, 'New typed answer')
+  assert.equal(retyped.inputMode, 'typed')
+  assert.equal(retyped.transcriptionId, null)
+  assert.deepEqual(retyped.transcriptionSegments, [])
+  const next = applyDictation(retyped, 'New addition', 'fresh')
+  assert.equal(next.text, 'New typed answer\n\nNew addition')
+  assert.deepEqual(next.transcriptionSegments.map(s => s.transcription_id), ['fresh'])
+  assert.equal(editDraftText(original, 'Edited clip plus typed text').transcriptionId, 'discarded')
+})
+
 test('practice, reply and original-case revision drafts survive independently', () => {
   storage.clear()
   writeStored(draftKey('session-a', 'original', 'submit_answer'), { text: 'revision' })

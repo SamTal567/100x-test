@@ -1,4 +1,4 @@
-import type { TurnRequest } from '../types'
+import type { TranscriptionSegment, TurnRequest } from '../types'
 
 export interface AnswerDraft {
   text: string
@@ -6,9 +6,10 @@ export interface AnswerDraft {
   cloze: Record<string, string> | null
   inputMode: 'typed' | 'voice'
   transcriptionId: string | null
+  transcriptionSegments?: TranscriptionSegment[]
 }
 
-export const emptyDraft: AnswerDraft = { text: '', diagram: null, cloze: null, inputMode: 'typed', transcriptionId: null }
+export const emptyDraft: AnswerDraft = { text: '', diagram: null, cloze: null, inputMode: 'typed', transcriptionId: null, transcriptionSegments: [] }
 export const draftKey = (sessionId: string, promptId: string | undefined, action: string) =>
   `cc:draft:${sessionId}:${promptId || 'none'}:${action}`
 export const pendingKey = (sessionId: string) => `cc:pending:${sessionId}`

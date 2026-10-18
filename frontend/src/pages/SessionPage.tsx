@@ -8,6 +8,7 @@ import { SessionTranscript } from '../components/SessionTranscript'
 import { AttemptView, ReportView } from '../components/ReportView'
 import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
 import { TrackedResourceLink } from '../components/TrackedResourceLink'
+import { applyDictation, editDraftText } from '../lib/dictation'
 import { draftKey, emptyDraft, pendingKey, readStored, safeResourceUrl, savedPending, writeStored } from '../lib/sessionDrafts'
 import type { AnswerDraft } from '../lib/sessionDrafts'
 import type { CasePrompt, SessionDetail, SessionReport, TurnRequest } from '../types'
@@ -21,7 +22,7 @@ interface SessionPageProps {
 }
 
 type Action = TurnRequest['action']
-type AnswerPayload = Pick<TurnRequest, 'text' | 'diagram_state' | 'cloze_state' | 'input_mode' | 'transcription_id' | 'resource_id'>
+type AnswerPayload = Pick<TurnRequest, 'text' | 'diagram_state' | 'cloze_state' | 'input_mode' | 'transcription_id' | 'transcription_segments' | 'resource_id'>
 type Send = (action: Action, payload?: AnswerPayload) => Promise<boolean>
 
 const PromptView: React.FC<{ prompt: CasePrompt; children?: React.ReactNode }> = ({ prompt, children }) => <section className="scenario-card" aria-label="Current scenario">
@@ -46,11 +47,12 @@ const AnswerComposer: React.FC<{
   })
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!draft.text.trim() || disabled) return
+    if (!draft.text.trim() || disabled || voiceOpen) return
     const success = await send(action, {
       text: draft.text.trim(), diagram_state: exercises ? draft.diagram : null,
       cloze_state: exercises ? draft.cloze : null, input_mode: draft.inputMode,
       transcription_id: draft.transcriptionId,
+      transcription_segments: draft.transcriptionSegments || [],
     })
     if (success) { writeStored(storageKey, null); setDraft(emptyDraft); setVoiceOpen(false) }
   }
@@ -59,10 +61,11 @@ const AnswerComposer: React.FC<{
     {exercises && prompt?.diagram_preset && <PresetDiagramView diagram={prompt.diagram_preset} value={draft.diagram} onChange={diagram => update({ diagram })} readOnly={disabled} />}
     {exercises && prompt?.cloze_preset && <ClozeExerciseView cloze={prompt.cloze_preset} value={draft.cloze} onChange={cloze => update({ cloze })} readOnly={disabled} />}
     <div className="answer-header-row"><label className="answer-label" htmlFor={inputId}>{label}</label><span className="answer-guide-tip">Draft saved in this browser tab</span></div>
-    <textarea id={inputId} className="textarea answer-textarea" rows={action === 'answer_probe' || action === 'clarify' || action === 'correct_ai' ? 3 : 6} value={draft.text} required disabled={disabled} autoFocus={action === 'clarify' || action === 'correct_ai'} onChange={event => update({ text: event.target.value })} aria-describedby={`${inputId}-help`} />
+    <textarea id={inputId} className="textarea answer-textarea" rows={action === 'answer_probe' || action === 'clarify' || action === 'correct_ai' ? 3 : 6} value={draft.text} required disabled={disabled} autoFocus={action === 'clarify' || action === 'correct_ai'} onChange={event => update(editDraftText(draft, event.target.value))} aria-describedby={`${inputId}-help`} />
     <p id={`${inputId}-help`} className="muted-note">{action === 'answer_probe' ? 'Send a reply or answer the follow-up. This keeps the tutoring conversation open.' : exercises ? 'Explain your reasoning in words as well as making any diagram or blank selections.' : action === 'clarify' ? 'Ask about the scenario assumptions. A clarification is recorded separately from your answer.' : action === 'correct_ai' ? 'Point out the specific part of your answer the tutor misunderstood.' : 'Explain the mechanism and why it applies to this case.'}</p>
-    {voiceOpen && !disabled && <VoiceRecorder sessionId={sessionId} onConfirmedTranscript={(text, transcriptionId) => { update({ text, inputMode: 'voice', transcriptionId }); setVoiceOpen(false) }} onCancel={() => setVoiceOpen(false)} />}
-    <div className="answer-actions-bar"><div className="secondary-inputs-group">{voice && !voiceOpen && <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => setVoiceOpen(true)}>🎙️ Dictate</button>}</div><button type="submit" className="btn btn-primary" disabled={disabled || !draft.text.trim()}>{submitLabel}</button></div>
+    {voiceOpen && !disabled && <VoiceRecorder sessionId={sessionId} existingText={draft.text} onConfirmedTranscript={(text, transcriptionId, mode) => { update(applyDictation(draft, text, transcriptionId, mode)); setVoiceOpen(false) }} onCancel={() => setVoiceOpen(false)} />}
+    {voiceOpen && <p className="muted-note">Add or cancel the recording before submitting your answer.</p>}
+    <div className="answer-actions-bar"><div className="secondary-inputs-group">{voice && !voiceOpen && <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => setVoiceOpen(true)}>🎙️ {draft.text.trim() ? 'Add more by voice' : 'Dictate'}</button>}</div><button type="submit" className="btn btn-primary" disabled={disabled || voiceOpen || !draft.text.trim()}>{submitLabel}</button></div>
   </form>
 }
 

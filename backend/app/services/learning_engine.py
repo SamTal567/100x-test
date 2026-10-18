@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import update
 from app.db.models import (Session, Message, Attempt, Gap, CriterionAssessment, CasePrompt,
     Intervention, TurnIdempotency, Attachment, Transcription, Concept)
-from app.schemas import TurnRequest, TurnResponse, MessageOut, CasePromptOut
+from app.schemas import TurnRequest, TurnResponse, MessageOut, CasePromptOut, TranscriptionSegment
 from app.services.evidence import snapshot_case, assessment_answer, validate_exercise, exercise_results, normalized_proposal
 from app.services.reports import attempt_reports, build_report
 from app.resources import LESSONS, RESOURCE_VERSION
@@ -99,15 +99,16 @@ class SessionService:
             record = self.db.get(Attachment, key)
             if not record or record.owner_id != owner_id or record.session_id != session.id:
                 raise ValueError("Attachment does not belong to this session")
-        if turn.transcription_id:
-            record = self.db.get(Transcription, turn.transcription_id)
+        voice_segments = self._voice_segments(turn)
+        for segment in voice_segments:
+            record = self.db.get(Transcription, segment.transcription_id)
             if not record or record.owner_id != owner_id or record.session_id != session.id:
                 raise ValueError("Transcription does not belong to this session")
             if record.status not in ("transcribed", "confirmed"):
                 raise ValueError("Transcription is not ready to confirm")
             if turn.input_mode != "voice" or not (turn.text or "").strip():
                 raise ValueError("Confirm the edited voice transcript before submission")
-        if turn.input_mode == "voice" and not turn.transcription_id:
+        if turn.input_mode == "voice" and not voice_segments:
             raise ValueError("Voice input must reference the reviewed transcription")
         if turn.action in ("resource_opened", "resource_completed"):
             item = self.db.get(Intervention, turn.resource_id) if turn.resource_id else None
@@ -120,6 +121,33 @@ class SessionService:
                 concept = self.db.get(Concept, session.concept_id)
                 if not concept or concept.slug not in LESSONS or turn.text not in (None, "", f"/v1/resources/{concept.slug}"):
                     raise ValueError("Only the current concept's prepared guide can be opened without a resource ID")
+
+    @staticmethod
+    def _voice_segments(turn):
+        if turn.transcription_segments:
+            return turn.transcription_segments
+        if turn.transcription_id:
+            return [TranscriptionSegment(transcription_id=turn.transcription_id,
+                confirmed_text=turn.text or "", confirmation_scope="legacy_draft")]
+        return []
+
+    def _confirm_transcripts(self, turn, message, attempt):
+        segments = self._voice_segments(turn)
+        ids = [segment.transcription_id for segment in segments]
+        for segment in segments:
+            record = self.db.get(Transcription, segment.transcription_id)
+            event = {"edited": segment.confirmed_text != record.raw_transcript,
+                "confirmed_text": segment.confirmed_text, "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                "confirmation_scope": segment.confirmation_scope, "transcription_ids": ids,
+                "message_id": message.id if message else None, "attempt_id": attempt.id if attempt else None}
+            metadata = dict(record.correction_metadata or {})
+            prior = list(metadata.get("confirmations", []))
+            if record.confirmed_text is not None and not prior:
+                prior.append({"confirmed_text": record.confirmed_text, "confirmation_scope": "historical_unknown", **metadata})
+            metadata.update({key: value for key, value in event.items() if key != "confirmed_text"})
+            metadata["confirmations"] = prior + [event]
+            record.confirmed_text, record.status = segment.confirmed_text, "confirmed"
+            record.correction_metadata = metadata
 
     def _support(self, session, stage):
         if stage in ("diagnostic", "apply"):
@@ -145,8 +173,9 @@ class SessionService:
             cloze_state=turn.cloze_state, rubric_version=case.rubric.version if case.rubric else None,
             gap_id=gap.id if gap else None, case_snapshot=snapshot_case(case),
             support_level=self._support(session, stage), processing_status="pending")
-        if turn.transcription_id:
-            attempt.raw_transcript = self.db.get(Transcription, turn.transcription_id).raw_transcript
+        segments = self._voice_segments(turn)
+        if segments:
+            attempt.raw_transcript = "\n\n".join(self.db.get(Transcription, segment.transcription_id).raw_transcript or "" for segment in segments)
         self.db.add(attempt)
         self.db.flush()
         return attempt
@@ -156,6 +185,8 @@ class SessionService:
             raise ValueError("Session owner does not match")
         key = hashlib.sha256(f"{session.id}:{turn.client_turn_id}".encode()).hexdigest()
         body = turn.model_dump(mode="json")
+        if not body.get("transcription_segments"):
+            body.pop("transcription_segments", None)  # Keep pre-upgrade saved request hashes valid.
         digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
         existing = self.db.get(TurnIdempotency, key)
         if existing and existing.request_body_hash != digest:
@@ -190,17 +221,18 @@ class SessionService:
                 existing = TurnIdempotency(client_turn_id=key, session_id=session.id,
                     request_body_hash=digest, request_payload=body, state="processing")
                 self.db.add(existing)
+                learner = None
+                self._attempt = None
                 if turn.text:
                     learner = self._message(session, messages, turn.text, role="learner")
-                    learner.input_mode, learner.transcription_id = turn.input_mode, turn.transcription_id
+                    segments = self._voice_segments(turn)
+                    learner.input_mode = turn.input_mode
+                    learner.transcription_id = segments[-1].transcription_id if segments else None
                     learner.attachment_ids = turn.attachment_ids
-                if turn.transcription_id:
-                    transcript = self.db.get(Transcription, turn.transcription_id)
-                    transcript.confirmed_text, transcript.status = turn.text, "confirmed"
-                    transcript.correction_metadata = {"edited": turn.text != transcript.raw_transcript, "confirmed_at": datetime.now(timezone.utc).isoformat()}
                 if turn.action in ("submit_answer", "submit_practice"):
                     self._attempt = self._new_attempt(session, turn, self.db.get(CasePrompt, session.current_prompt_id))
                     existing.attempt_id = self._attempt.id
+                self._confirm_transcripts(turn, learner, self._attempt)
                 self.db.commit()  # Durable checkpoint BEFORE external calls.
             else:
                 self.db.refresh(session)

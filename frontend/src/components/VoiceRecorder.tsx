@@ -1,14 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client'
+import { TranscriptReview } from './TranscriptReview'
+import type { DictationMode } from '../lib/dictation'
 
 interface VoiceRecorderProps {
   sessionId: string
-  onConfirmedTranscript: (text: string, transcriptionId: string) => void
+  existingText: string
+  onConfirmedTranscript: (text: string, transcriptionId: string, mode: DictationMode) => void
   onCancel: () => void
 }
 
 export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   sessionId,
+  existingText,
   onConfirmedTranscript,
   onCancel,
 }) => {
@@ -24,6 +28,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const timerRef = useRef<number | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const mountedRef = useRef(true)
+  const confirmedRef = useRef(false)
 
   useEffect(() => {
     mountedRef.current = true
@@ -43,6 +48,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 
   const startRecording = async () => {
     setErrorMsg(null)
+    confirmedRef.current = false
     chunksRef.current = []
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -111,12 +117,19 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     }
   }
 
-  const handleConfirm = () => {
+  const handleConfirm = (mode: DictationMode) => {
+    if (confirmedRef.current) return
     if (!editedTranscript.trim() || !transcriptionId) {
       setErrorMsg('Transcript cannot be empty.')
       return
     }
-    onConfirmedTranscript(editedTranscript.trim(), transcriptionId)
+    try {
+      confirmedRef.current = true
+      onConfirmedTranscript(editedTranscript.trim(), transcriptionId, mode)
+    } catch (error) {
+      confirmedRef.current = false
+      setErrorMsg(error instanceof Error ? error.message : 'The transcript could not be added. Your existing answer is preserved.')
+    }
   }
 
   return (
@@ -138,7 +151,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         )}
         {recordingState === 'idle' && (
           <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            🎙️ Dictate your response. You will inspect and edit the transcript before submitting.
+            🎙️ {existingText.trim() ? 'Record more to add to your existing answer.' : 'Dictate your response.'} Review and edit the new transcript before using it.
           </span>
         )}
         {recordingState === 'reviewing' && (
@@ -154,26 +167,9 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         </div>
       )}
 
-      {recordingState === 'reviewing' && (
-        <div style={{ marginTop: '12px' }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px', color: 'var(--text-secondary)' }}>
-            Review & Edit Transcript:
-          </label>
-          <textarea
-            aria-label="Review and edit transcript"
-            className="textarea"
-            rows={4}
-            value={editedTranscript}
-            onChange={(e) => setEditedTranscript(e.target.value)}
-            placeholder="Edit transcript if necessary..."
-          />
-          {rawTranscript !== editedTranscript && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Edited from original raw transcription.
-            </div>
-          )}
-        </div>
-      )}
+      {recordingState === 'reviewing' && <TranscriptReview existingText={existingText} transcript={editedTranscript} rawTranscript={rawTranscript}
+        onChange={setEditedTranscript} onConfirm={handleConfirm} onCancel={onCancel}
+        onRecordAgain={() => { setErrorMsg(null); setRecordingState('idle') }} />}
 
       <div style={{ display: 'flex', gap: '10px', marginTop: '12px', justifyContent: 'flex-end' }}>
         {recordingState === 'idle' && (
@@ -193,16 +189,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
           </button></>
         )}
 
-        {recordingState === 'reviewing' && (
-          <>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRecordingState('idle')}>
-              Record Again
-            </button>
-            <button type="button" className="btn btn-accent-mint btn-sm" onClick={handleConfirm}>
-              ✓ Use This Answer
-            </button>
-          </>
-        )}
+        {recordingState === 'transcribing' && <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>Cancel transcription</button>}
       </div>
     </div>
   )
