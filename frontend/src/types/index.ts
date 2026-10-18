@@ -219,6 +219,8 @@ export interface AttemptReport {
   score?: number | null
   met_criteria_count?: number | null
   total_criteria_count?: number | null
+  uncertain_criteria_count?: number
+  unavailable_criteria_count?: number
 }
 
 export interface SkillEvidence {
@@ -256,6 +258,17 @@ export interface SessionReport {
   final_score?: number | null
   score_change?: number | null
   score_summary?: string | null
+  stage_summaries?: {
+    stage: 'baseline' | 'revision' | 'transfer'
+    attempt_count: number
+    met_count: number
+    total_count: number
+    uncertain_count: number
+    unavailable_count: number
+    percentage: number | null
+    status: 'not_assessed' | 'partial' | 'assessed'
+    support_levels: string[]
+  }[]
 }
 
 export interface TranscriptionResult {

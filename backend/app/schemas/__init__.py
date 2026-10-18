@@ -170,6 +170,8 @@ class AttemptReport(BaseModel):
     score: Optional[int] = None
     met_criteria_count: Optional[int] = None
     total_criteria_count: Optional[int] = None
+    uncertain_criteria_count: int = 0
+    unavailable_criteria_count: int = 0
 
     @field_validator("diagram_preset", "cloze_preset", mode="before")
     @classmethod
@@ -194,6 +196,7 @@ class SessionReport(BaseModel):
     final_score: Optional[int] = None
     score_change: Optional[int] = None
     score_summary: Optional[str] = None
+    stage_summaries: list[dict] = Field(default_factory=list)
 
 
 

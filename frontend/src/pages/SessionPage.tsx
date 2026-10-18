@@ -7,6 +7,7 @@ import { ClozeExerciseView } from '../components/ClozeExerciseView'
 import { SessionTranscript } from '../components/SessionTranscript'
 import { AttemptView, ReportView } from '../components/ReportView'
 import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
+import { TrackedResourceLink } from '../components/TrackedResourceLink'
 import { draftKey, emptyDraft, pendingKey, readStored, safeResourceUrl, savedPending, writeStored } from '../lib/sessionDrafts'
 import type { AnswerDraft } from '../lib/sessionDrafts'
 import type { CasePrompt, SessionDetail, SessionReport, TurnRequest } from '../types'
@@ -140,6 +141,11 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
 
   const composer = (action: Action, label: string, submitLabel: string, exercises = false, voice = true) => <AnswerComposer key={`${sessionId}:${session?.current_prompt?.id}:${action}`} sessionId={sessionId} prompt={session?.current_prompt} action={action} label={label} submitLabel={submitLabel} exercises={exercises} voice={voice} disabled={submitting || Boolean(pending)} send={send} />
   const can = (action: Action) => session?.allowed_actions?.includes(action) || false
+  const openResource = async (url: string) => {
+    const canonical = url.split('#')[0]
+    const offered = report?.interventions_used.find(item => item.url === canonical && item.type === 'resource')
+    return send('resource_opened', { resource_id: offered?.id, text: canonical })
+  }
   const actionsDisabled = submitting || Boolean(pending)
   const prompt = session?.current_prompt
   const terminal = session?.stage === 'review' || session?.stage === 'completed'
@@ -165,17 +171,20 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
           conceptSlug={session.concept_slug}
           conceptTitle={session.concept_title}
           onScrollToChat={() => chatRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          onRetryAssessment={can('retry_processing') ? () => { void send('retry_processing') } : undefined}
+          disabled={actionsDisabled}
+          onOpenResource={openResource}
         />
         {sourceAttempts.map(attempt => <details key={attempt.id} className="earlier-answers-panel"><summary className="earlier-answers-summary">Your original answer for this concern</summary><AttemptView attempt={attempt} anchor={false} /></details>)}
         {(session.evidence_cards || []).map((card, index) => <div className="gap-finding-card" key={card.id || index}><strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>{card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}{card.probe_question && <p>Follow-up: {card.probe_question}</p>}</div>)}
       </>}
       <div ref={chatRef}>
-        <SessionTranscript messages={session.messages || []} stage={session.stage} />
+        <SessionTranscript messages={session.messages || []} stage={session.stage} onOpenResource={openResource} disabled={actionsDisabled || !can('resource_opened')} />
       </div>
       {session.stage === 'investigate' && <div className="tutoring-actions action-wrap">
         {([['request_hint', 'Request a hint'], ['request_teaching', 'Ask for an explanation'], ['request_practice', 'Try guided practice'], ['request_help', 'Suggest a resource']] as const).filter(([action]) => can(action)).map(([action, label]) => <button type="button" key={action} className="btn btn-secondary btn-sm" disabled={actionsDisabled} onClick={() => send(action)}>{label}</button>)}
       </div>}
-      {session.stage === 'investigate' && report?.interventions_used.filter(item => item.url && safeResourceUrl(item.url)).map(item => <section className="card recovery-card" key={item.id || item.url} aria-label="Suggested resource"><strong>{item.title || 'Authored resource'}</strong><p className="muted-note">Reading is optional. Opening and completion are recorded separately from a help request.</p><div className="action-wrap"><a className="btn btn-secondary btn-sm" href={safeResourceUrl(item.url!)!} target="_blank" rel="noopener noreferrer" onClick={event => { if (actionsDisabled) event.preventDefault(); else if (can('resource_opened')) void send('resource_opened', { resource_id: item.resource_id || item.id }) }}>Open resource</a>{can('resource_completed') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled || item.completed} onClick={() => send('resource_completed', { resource_id: item.resource_id || item.id })}>{item.completed ? 'Marked complete' : 'Mark resource complete'}</button>}</div></section>)}
+      {session.stage === 'investigate' && report?.interventions_used.filter(item => item.url && safeResourceUrl(item.url)).map(item => <section className="card recovery-card" key={item.id || item.url} aria-label="Suggested resource"><strong>{item.title || 'Authored resource'}</strong><p className="muted-note">Reading is optional. Opening is recorded separately from your self-reported completion; neither establishes understanding.</p><div className="action-wrap"><TrackedResourceLink url={safeResourceUrl(item.url!)!} onOpenResource={openResource} disabled={actionsDisabled || !can('resource_opened')}>Open resource</TrackedResourceLink>{can('resource_completed') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled || item.completed} onClick={() => send('resource_completed', { resource_id: item.resource_id || item.id })}>{item.completed ? 'Marked complete (self-reported)' : 'Mark resource complete'}</button>}</div></section>)}
       <div className="action-wrap">{can('clarify') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled} aria-expanded={utility === 'clarify'} onClick={() => setUtility(utility === 'clarify' ? null : 'clarify')}>Clarify the scenario</button>}{can('correct_ai') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled} aria-expanded={utility === 'correct_ai'} onClick={() => setUtility(utility === 'correct_ai' ? null : 'correct_ai')}>Correct the AI’s interpretation</button>}</div>
       {utility && can(utility) && composer(utility, utility === 'clarify' ? 'Question about the scenario' : 'Correction of the AI’s interpretation', utility === 'clarify' ? 'Send clarification question' : 'Send correction', false, false)}
       {session.stage === 'diagnostic' && can('submit_answer') && composer('submit_answer', 'Explain what happens and why', 'Save baseline answer →', true)}

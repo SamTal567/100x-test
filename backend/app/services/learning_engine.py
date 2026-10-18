@@ -10,6 +10,7 @@ from app.db.models import (Session, Message, Attempt, Gap, CriterionAssessment, 
 from app.schemas import TurnRequest, TurnResponse, MessageOut, CasePromptOut
 from app.services.evidence import snapshot_case, assessment_answer, validate_exercise, exercise_results, normalized_proposal
 from app.services.reports import attempt_reports, build_report
+from app.resources import LESSONS, RESOURCE_VERSION
 
 STAGE_ACTIONS = {
     "diagnostic": ["submit_answer", "clarify", "finish_session", "retry_processing"],
@@ -110,15 +111,27 @@ class SessionService:
             raise ValueError("Voice input must reference the reviewed transcription")
         if turn.action in ("resource_opened", "resource_completed"):
             item = self.db.get(Intervention, turn.resource_id) if turn.resource_id else None
-            if not item or item.session_id != session.id or item.intervention_type != "resource":
-                raise ValueError("Resource event must identify a resource from this session")
+            if turn.resource_id or turn.action == "resource_completed":
+                if not item or item.session_id != session.id or item.intervention_type != "resource":
+                    raise ValueError("Resource event must identify a resource from this session")
+                if turn.text and turn.text != item.url:
+                    raise ValueError("The guide URL does not match this resource")
+            else:
+                concept = self.db.get(Concept, session.concept_id)
+                if not concept or concept.slug not in LESSONS or turn.text not in (None, "", f"/v1/resources/{concept.slug}"):
+                    raise ValueError("Only the current concept's prepared guide can be opened without a resource ID")
 
     def _support(self, session, stage):
         if stage in ("diagnostic", "apply"):
             return "independent"
-        types = {i.intervention_type for i in self.db.query(Intervention).filter_by(session_id=session.id, status="delivered")}
+        interventions = self.db.query(Intervention).filter_by(session_id=session.id).all()
+        types = {i.intervention_type for i in interventions if i.status == "delivered"}
+        if any(i.intervention_type == "resource" and (i.opened_at or i.completed_at) for i in interventions):
+            types.add("resource_used")
+        if any(i.intervention_type == "resource" for i in interventions):
+            types.add("resource")
         for kind, label in [("teaching", "after_teaching"), ("hint", "after_hint"),
-                            ("practice", "after_practice"), ("resource", "after_help_offered"),
+                            ("practice", "after_practice"), ("resource_used", "after_resource"), ("resource", "after_help_offered"),
                             ("clarification", "after_clarification")]:
             if kind in types:
                 return label
@@ -228,8 +241,12 @@ class SessionService:
                 elif turn.action == "request_help":
                     intervention = self._resource(session, messages)
                 elif turn.action in ("resource_opened", "resource_completed"):
-                    item = self.db.get(Intervention, turn.resource_id)
-                    setattr(item, "opened_at" if turn.action == "resource_opened" else "completed_at", datetime.now(timezone.utc))
+                    item = self.db.get(Intervention, turn.resource_id) if turn.resource_id else self._resource(session, messages, offer_message=False)
+                    if turn.action == "resource_opened":
+                        self._snapshot_opened_guide(item)
+                    field = "opened_at" if turn.action == "resource_opened" else "completed_at"
+                    if getattr(item, field) is None:
+                        setattr(item, field, datetime.now(timezone.utc))
                     intervention = {"id": item.id, "type": "resource", "title": item.title, "url": item.url, "content": item.content}
                 else:
                     await self._tutor(session, turn, messages)
@@ -377,7 +394,7 @@ class SessionService:
             f"Here is your unfamiliar scenario to test your understanding:\n\n"
             f"> {case.scenario_text}"
             + (f"\n\n**Stated assumptions:**\n{facts}" if facts else "")
-            + "\n\nExplain what happens in this unfamiliar case and why. Once submitted, your final understanding score and comparison report will be generated."
+            + "\n\nExplain what happens in this unfamiliar case and why. The report will show which prepared criteria your answer demonstrates, separately from your baseline and any supported revision."
         )
         self._message(session, messages, scenario_msg)
 
@@ -402,11 +419,38 @@ class SessionService:
     async def _tutor(self, session, turn, messages):
         gap, case = self._gap(session), self.db.get(CasePrompt, session.current_prompt_id)
         original = self.db.get(Attempt, gap.source_attempt_id) if gap else None
+        # Use the wording/key actually attached to this answer, not a mutable
+        # current rubric. Practice may intentionally use its own prepared case.
+        snapshot = (original.case_snapshot if original and original.case_prompt_id == case.id and original.case_snapshot
+            else snapshot_case(case))
+        prepared = snapshot.get("rubric", {})
+        concept = self.db.get(Concept, session.concept_id)
+        lesson = LESSONS.get(concept.slug) if concept else None
+        support = self.db.query(Intervention).filter_by(session_id=session.id).order_by(Intervention.created_at).all()
+        source_assessments = [{"criterion": c.criterion, "skill_id": c.skill_id, "rating": c.rating,
+            "met": c.met, "evidence": c.evidence, "status": c.status} for c in (original.criterion_assessments if original else [])]
+        same_case = bool(original and original.case_prompt_id == case.id)
+        teaching_context = {
+            "version": "2026-10-19.1", "case_id": snapshot.get("id"), "case_version": snapshot.get("version"),
+            "rubric_version": prepared.get("version"), "content_review_status": snapshot.get("review_status", "unreviewed"),
+            "source_provenance": "frozen_attempt" if original and original.case_snapshot and original.case_prompt_id == case.id else "current_prepared_case",
+            "reference_answer": prepared.get("reference_answer", ""), "criteria": prepared.get("criteria", []),
+            "assessment_attempt_id": original.id if same_case else None,
+            "assessments": source_assessments if same_case else [],
+            "source_attempt": {"attempt_id": original.id, "case_id": original.case_prompt_id,
+                "case_version": (original.case_snapshot or {}).get("version"),
+                "assessments": source_assessments} if original else None,
+            "lesson": {"version": RESOURCE_VERSION, "source": "AI-authored, unreviewed", **lesson} if lesson else None,
+            "help_history": [{"type": item.intervention_type, "title": item.title, "status": item.status,
+                "content": (item.content or "")[-6000:], "opened": item.opened_at is not None,
+                "completed": item.completed_at is not None, "created_at": item.created_at.isoformat()} for item in support[-12:]],
+        }
         history = [{"role": m.role, "content": m.content} for m in self.db.query(Message).filter_by(session_id=session.id).order_by(Message.created_at, Message.id)]
         self.db.commit()
-        reply = await self.ai.tutor_conversation(scenario=case.scenario_text, assumptions=case.assumptions or [],
+        reply = await self.ai.tutor_conversation(scenario=snapshot["scenario_text"], assumptions=snapshot.get("assumptions") or [],
             original_answer=original.answer_text if original else "", gap_description=gap.description if gap else None,
-            probe_text=gap.probe_text if gap else None, history=history, action=turn.action, user_text=turn.text)
+            probe_text=gap.probe_text if gap else None, history=history, action=turn.action, user_text=turn.text,
+            teaching_context=teaching_context)
         text = reply.message
         if reply.diagram_ascii and reply.diagram_ascii not in text:
             text += "\n\n" + reply.diagram_ascii
@@ -432,10 +476,29 @@ class SessionService:
         self._intervention(session, "practice", "Prepared guided practice", case.scenario_text)
         self._message(session, messages, "Here is a prepared practice exercise. It is guided learning evidence, not an independent transfer assessment.")
 
-    def _resource(self, session, messages):
+    def _snapshot_opened_guide(self, item):
+        """Append the actual opened version, including legacy ID-based offers."""
+        prefix = "/v1/resources/"
+        slug = item.url[len(prefix):] if item.url and item.url.startswith(prefix) else None
+        lesson = LESSONS.get(slug)
+        marker = f"Opened guide snapshot ({RESOURCE_VERSION})"
+        if lesson and marker not in (item.content or ""):
+            snapshot = {"version": RESOURCE_VERSION, "source": "AI-authored, unreviewed",
+                "opened_at": datetime.now(timezone.utc).isoformat(), **lesson}
+            item.content = (item.content or "") + f"\n\n{marker}:\n" + json.dumps(snapshot, ensure_ascii=False)
+
+    def _resource(self, session, messages, offer_message=True):
         concept = self.db.get(Concept, session.concept_id)
         url = f"/v1/resources/{concept.slug}"
         text = f"[Open the prepared {concept.title} guide]({url}). Reading it is optional; opening a link alone does not prove learning."
-        item = self._intervention(session, "resource", concept.title, text, url=url)
-        self._message(session, messages, text)
-        return {"id": item.id, "type": "resource", "title": item.title, "content": text, "url": url}
+        item = self.db.query(Intervention).filter_by(session_id=session.id, intervention_type="resource", url=url).order_by(Intervention.created_at).first()
+        if not item:
+            lesson = LESSONS.get(concept.slug)
+            content = text
+            if lesson:
+                content += "\n\n" + json.dumps({"version": RESOURCE_VERSION, "source": "AI-authored, unreviewed", **lesson}, ensure_ascii=False)
+            item = self._intervention(session, "resource", concept.title, content, status="offered", url=url)
+        if offer_message:
+            self._message(session, messages, text)
+            return {"id": item.id, "type": "resource", "title": item.title, "content": text, "url": url}
+        return item

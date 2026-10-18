@@ -20,6 +20,7 @@ const { MessageContent } = require('../components/MessageContent.tsx')
 const { ReportView, AttemptView } = require('../components/ReportView.tsx')
 const { StageProgressBar } = require('../components/StageProgressBar.tsx')
 const { SessionTranscript } = require('../components/SessionTranscript.tsx')
+const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
 test('practice, reply and original-case revision drafts survive independently', () => {
@@ -31,6 +32,62 @@ test('practice, reply and original-case revision drafts survive independently', 
   assert.equal(readStored(draftKey('session-a', 'practice', 'submit_practice')).diagram.selected_repair, 'archive')
   assert.equal(readStored(draftKey('session-b', 'original', 'submit_answer')), null)
   assert.equal(readStored(draftKey('session-a', 'original', 'answer_probe')).text, 'reply')
+})
+
+test('unavailable baseline assessment never labels the learner wrong or assigns zero percent', () => {
+  const attempt = { id: 'failed', stage: 'diagnostic', criteria: [{ criterion: 'Explains storage', rating: 'technical_failure', met: null, status: 'provisional' }] }
+  const html = render(DiagnosticFeedback, { attempts: [attempt], conceptSlug: 'storage-persistence' })
+  assert.match(html, /Could not be assessed/)
+  assert.doesNotMatch(html, /0%|You missed some key concepts|None of the core criteria|All prepared criteria were satisfied/)
+})
+
+test('baseline feedback distinguishes partial, omitted and ambiguous evidence', () => {
+  const attempt = { stage: 'diagnostic', criteria: [
+    { criterion: 'Some reasoning', rating: 'partially_demonstrated', met: false },
+    { criterion: 'Unstated step', rating: 'not_addressed', met: false },
+    { criterion: 'Ambiguous wording', rating: 'ambiguous_needs_clarification', met: null },
+  ] }
+  const html = render(DiagnosticFeedback, { attempts: [attempt] })
+  for (const label of ['Partially demonstrated', 'Not addressed', 'Needs clarification']) assert.ok(html.includes(label))
+  assert.doesNotMatch(html, /0%|You missed|What You Got Right/)
+})
+
+test('report separates stage evidence even when legacy score fields claim growth', () => {
+  const html = render(ReportView, { report: { session_id: 'one', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive', gaps: [], attempts: [], interventions_used: [], assessment_status: 'provisional', final_score: 100, initial_score: 0, score_change: 100, score_summary: '100% growth', stage_summaries: [
+    { stage: 'baseline', status: 'assessed', met_count: 0, total_count: 1, percentage: 0, uncertain_count: 0, unavailable_count: 0, support_levels: ['independent'] },
+    { stage: 'revision', status: 'assessed', met_count: 1, total_count: 1, percentage: 100, uncertain_count: 0, unavailable_count: 0, support_levels: ['after_teaching'] },
+    { stage: 'transfer', status: 'not_assessed', met_count: 0, total_count: 0, percentage: null, uncertain_count: 0, unavailable_count: 0, support_levels: [] },
+  ] }, onBack: () => {} })
+  assert.match(html, /Baseline evidence/)
+  assert.match(html, /Revision after support/)
+  assert.match(html, /Unfamiliar case evidence/)
+  assert.match(html, /Not assessed/)
+  assert.doesNotMatch(html, /Concept Understanding|growth/i)
+})
+
+test('tracked guides save the opening before navigating and close an empty tab if saving fails', async () => {
+  const { openTrackedResource } = require('../lib/trackedResources.ts')
+  const events = []
+  const tab = { opener: {}, location: { replace: url => events.push(['navigate', url]) }, close: () => events.push(['close']) }
+  const host = { open: () => { events.push(['blank']); return tab }, location: { assign: url => events.push(['fallback', url]) } }
+  assert.equal(await openTrackedResource('/v1/resources/storage-persistence', async () => { events.push(['save']); return true }, host), true)
+  assert.deepEqual(events.map(e => e[0]), ['blank', 'save', 'navigate'])
+  assert.equal(tab.opener, null)
+  events.length = 0
+  assert.equal(await openTrackedResource('/v1/resources/storage-persistence', async () => false, host), false)
+  assert.deepEqual(events.map(e => e[0]), ['blank', 'close'])
+  events.length = 0
+  assert.equal(await openTrackedResource('/v1/resources/storage-persistence', async () => { throw Error('offline') }, host), false)
+  assert.deepEqual(events.map(e => e[0]), ['blank', 'close'])
+})
+
+test('in-session guide and conversation links use tracked controls instead of unrecorded anchors', () => {
+  const onOpenResource = async () => true
+  const html = render(DiagnosticFeedback, { attempts: [{ stage: 'diagnostic', criteria: [] }], conceptSlug: 'storage-persistence', onOpenResource })
+  assert.doesNotMatch(html, /<a[^>]*href="\/v1\/resources/)
+  const conversation = render(SessionTranscript, { stage: 'investigate', messages: [{ id: 'guide', role: 'tutor', content: '[Guide](/v1/resources/storage-persistence)' }], onOpenResource })
+  assert.doesNotMatch(conversation, /<a[^>]*href="\/v1\/resources/)
+  assert.match(conversation, /<button/)
 })
 
 test('pending retry restores the exact action, request identifier and submitted body', () => {

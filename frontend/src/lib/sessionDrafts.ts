@@ -34,6 +34,7 @@ export function supportLabel(support?: string | null): string {
     independent: 'Independent response', after_clarification: 'After scenario clarification',
     after_hint: 'After a hint', after_teaching: 'After teaching', after_practice: 'After guided practice',
     after_follow_up: 'After a targeted follow-up', after_help_offered: 'After help was offered',
+    after_resource: 'After opening or completing a study guide',
     legacy_unknown: 'Historical support not recorded', unknown: 'Support not recorded',
   }
   if (!support) return 'Support not recorded'

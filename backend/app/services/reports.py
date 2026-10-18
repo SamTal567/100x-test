@@ -15,11 +15,18 @@ def attempt_reports(db, session):
             "met": c.met, "evidence": c.evidence, "status": c.status, "reviewer_notes": c.reviewer_notes}
             for c in attempt.criterion_assessments]
         crit_list = [c for c in criteria if not (c.get("skill_id") or "").startswith("exercise:")]
-        if not crit_list:
-            crit_list = criteria
-        total_count = len(crit_list)
-        met_count = len([c for c in crit_list if c.get("met") is True])
-        attempt_score = round((met_count / total_count) * 100) if total_count > 0 else None
+        expected = {c["criterion"] for c in snapshot.get("rubric", {}).get("criteria", [])}
+        actual = {c["criterion"] for c in crit_list}
+        total_count = len(expected) if has_snapshot else len(crit_list)
+        met_count = sum(c.get("met") is True and c.get("rating") == "demonstrated" for c in crit_list)
+        missing_count = len(expected - actual)
+        unavailable_count = missing_count + sum(c.get("rating") == "technical_failure" for c in crit_list)
+        uncertain_count = sum(c.get("rating") != "technical_failure" and c.get("met") is None for c in crit_list)
+        usable = (has_snapshot and bool(expected) and expected == actual and len(crit_list) == len(expected)
+            and attempt.processing_status == "complete" and not unavailable_count and not uncertain_count
+            and all((c.get("rating"), c.get("met")) in {
+                ("demonstrated", True), ("partially_demonstrated", False), ("not_addressed", False)} for c in crit_list))
+        attempt_score = round(met_count / total_count * 100) if usable else None
         reports.append(AttemptReport(id=attempt.id, case_prompt_id=attempt.case_prompt_id,
             case_version=snapshot.get("version") if has_snapshot else None, rubric_version=attempt.rubric_version,
             provenance_warning=None if has_snapshot else "This legacy attempt has no frozen case snapshot. The displayed case is the current reference; its original wording and support history cannot be established.",
@@ -30,7 +37,8 @@ def attempt_reports(db, session):
             diagram_state=attempt.diagram_state, cloze_state=attempt.cloze_state, criteria=criteria,
             support_level=(attempt.support_level or "unknown") if has_snapshot else "unknown",
             processing_status=attempt.processing_status or "complete", created_at=attempt.created_at,
-            gap_id=attempt.gap_id, score=attempt_score, met_criteria_count=met_count, total_criteria_count=total_count))
+            gap_id=attempt.gap_id, score=attempt_score, met_criteria_count=met_count, total_criteria_count=total_count,
+            uncertain_criteria_count=uncertain_count, unavailable_criteria_count=unavailable_count))
     return reports
 
 
@@ -66,6 +74,25 @@ def skill_comparisons(reports):
             text += " Model judgments remain provisional until human review."
         item["change_summary"] = text
     return list(skills.values())
+
+
+def stage_summaries(reports, baseline_complete):
+    """Describe separate attempted cases; never turn raw totals into learning gain."""
+    result = []
+    for stage, source in (("baseline", "diagnostic"), ("revision", "investigate"), ("transfer", "apply")):
+        attempts = [a for a in reports if a.stage == source]
+        met = sum(a.met_criteria_count or 0 for a in attempts)
+        total = sum(a.total_criteria_count or 0 for a in attempts)
+        assessed = bool(attempts) and all(a.score is not None for a in attempts)
+        if stage == "baseline":
+            assessed = assessed and baseline_complete
+        result.append({"stage": stage, "attempt_count": len(attempts), "met_count": met, "total_count": total,
+            "uncertain_count": sum(a.uncertain_criteria_count for a in attempts),
+            "unavailable_count": sum(a.unavailable_criteria_count for a in attempts),
+            "percentage": round(met / total * 100) if assessed and total else None,
+            "status": "not_assessed" if not attempts else "assessed" if assessed else "partial",
+            "support_levels": sorted({a.support_level for a in attempts})})
+    return result
 
 
 def build_report(db, session, include_history=True):
@@ -111,30 +138,15 @@ def build_report(db, session, include_history=True):
             previous.append({"session_id": earlier.id, "created_at": earlier.created_at.isoformat(),
                 "outcome": other.outcome, "skill_comparisons": other.skill_comparisons})
 
-    baseline_attempts = [a for a in reports if a.stage == "diagnostic"]
-    baseline_crit = [c for a in baseline_attempts for c in a.criteria if not (c.get("skill_id") or "").startswith("exercise:")]
-    baseline_total = len(baseline_crit)
-    baseline_met = len([c for c in baseline_crit if c.get("met") is True])
-    initial_score = round((baseline_met / baseline_total) * 100) if baseline_total > 0 else None
-
-    final_attempts = [a for a in reports if a.stage == "apply"]
-    if not final_attempts:
-        final_attempts = [a for a in reports if a.stage == "investigate"]
-    final_crit = [c for a in final_attempts for c in a.criteria if not (c.get("skill_id") or "").startswith("exercise:")]
-    final_total = len(final_crit)
-    final_met = len([c for c in final_crit if c.get("met") is True])
-    final_score = round((final_met / final_total) * 100) if final_total > 0 else None
-
-    score_change = None
-    score_summary = None
-    if initial_score is not None and final_score is not None:
-        score_change = final_score - initial_score
-        sign = "+" if score_change >= 0 else ""
-        score_summary = f"Baseline: {initial_score}% → Final: {final_score}% ({sign}{score_change}% growth)"
-    elif final_score is not None:
-        score_summary = f"Understanding: {final_score}%"
-    elif initial_score is not None:
-        score_summary = f"Baseline: {initial_score}%"
+    summaries = stage_summaries(reports, bool(expected_ids) and set(expected_ids) == baseline_done)
+    initial_score = summaries[0]["percentage"]
+    final_score = summaries[2]["percentage"] if summaries[2]["support_levels"] == ["independent"] else None
+    # Compatibility fields describe criteria in these cases, never mastery or
+    # a before/after difference across differently scoped questions.
+    score_summary = "; ".join(f"{s['stage'].capitalize()}: " + (
+        "not assessed" if s["status"] == "not_assessed" else
+        f"{s['met_count']}/{s['total_count']} criteria demonstrated" + ("; assessment incomplete" if s["status"] == "partial" else ""))
+        for s in summaries)
 
     return SessionReport(session_id=session.id, concept_title=concept.title if concept else "", stage=session.stage,
         outcome=outcome, outcome_reason=reason, assessment_status="reviewed" if reviewed else "provisional",
@@ -144,5 +156,6 @@ def build_report(db, session, include_history=True):
             "status": i.status, "url": i.url, "content": i.content, "opened": i.opened_at is not None, "completed": i.completed_at is not None,
             "created_at": i.created_at.isoformat()} for i in interventions], skill_comparisons=skill_comparisons(reports),
         previous_sessions=previous, processing_status=session.processing_status or "idle",
-        initial_score=initial_score, final_score=final_score, score_change=score_change, score_summary=score_summary)
+        initial_score=initial_score, final_score=final_score, score_change=None, score_summary=score_summary,
+        stage_summaries=summaries)
 
