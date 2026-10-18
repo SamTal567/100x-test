@@ -6,6 +6,7 @@ import { PresetDiagramView } from '../components/PresetDiagramView'
 import { ClozeExerciseView } from '../components/ClozeExerciseView'
 import { SessionTranscript } from '../components/SessionTranscript'
 import { AttemptView, ReportView } from '../components/ReportView'
+import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
 import { draftKey, emptyDraft, pendingKey, readStored, safeResourceUrl, savedPending, writeStored } from '../lib/sessionDrafts'
 import type { AnswerDraft } from '../lib/sessionDrafts'
 import type { CasePrompt, SessionDetail, SessionReport, TurnRequest } from '../types'
@@ -73,6 +74,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   const [pending, setPending] = useState<TurnRequest | null>(() => savedPending(sessionId))
   const [utility, setUtility] = useState<'clarify' | 'correct_ai' | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const chatRef = useRef<HTMLDivElement>(null)
 
   const applyHydration = useCallback(async (state: SessionDetail) => {
     setSession(state)
@@ -150,7 +152,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   if (loading) return <div className="loading-container" role="status"><span className="spinner" />Restoring learning session…</div>
   if (!session) return <div className="error-banner" role="alert"><span>{error || 'This session could not be loaded.'}</span><button className="btn btn-secondary" onClick={onBackToCatalogue}>Catalogue</button></div>
 
-  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Fresh case — Independent application' : session.practice_active ? 'Guided practice — Support is recorded' : 'Investigation and tutoring'
+  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Unfamiliar Case — Application & Evaluation' : session.practice_active ? 'Guided practice — Support is recorded' : 'Investigation and tutoring'
   return <div className="session-page-wrapper">
     <div className="card session-topbar mb-4"><div className="session-topbar-header"><div className="session-title-group"><button type="button" className="btn btn-secondary btn-sm" onClick={onBackToCatalogue}>← Catalogue</button><div><h1 ref={headingRef} tabIndex={-1} className="session-concept-title">{session.concept_title || 'Concept Check'}</h1><div className="session-stage-subtitle">{stageTitle}</div></div></div></div><div className="session-progress-wrapper"><StageProgressBar currentStage={session.stage} recordedStages={recordedStages} /></div></div>
     {error && <div className="error-banner mb-4" role="alert"><span>{error}</span></div>}
@@ -158,10 +160,18 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
     {!terminal && <div className="stage-content-container">
       {prompt && <PromptView prompt={prompt} />}
       {session.stage === 'investigate' && <>
+        <DiagnosticFeedback
+          attempts={session.attempts || []}
+          conceptSlug={session.concept_slug}
+          conceptTitle={session.concept_title}
+          onScrollToChat={() => chatRef.current?.scrollIntoView({ behavior: 'smooth' })}
+        />
         {sourceAttempts.map(attempt => <details key={attempt.id} className="earlier-answers-panel"><summary className="earlier-answers-summary">Your original answer for this concern</summary><AttemptView attempt={attempt} anchor={false} /></details>)}
         {(session.evidence_cards || []).map((card, index) => <div className="gap-finding-card" key={card.id || index}><strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>{card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}{card.probe_question && <p>Follow-up: {card.probe_question}</p>}</div>)}
       </>}
-      <SessionTranscript messages={session.messages || []} stage={session.stage} />
+      <div ref={chatRef}>
+        <SessionTranscript messages={session.messages || []} stage={session.stage} />
+      </div>
       {session.stage === 'investigate' && <div className="tutoring-actions action-wrap">
         {([['request_hint', 'Request a hint'], ['request_teaching', 'Ask for an explanation'], ['request_practice', 'Try guided practice'], ['request_help', 'Suggest a resource']] as const).filter(([action]) => can(action)).map(([action, label]) => <button type="button" key={action} className="btn btn-secondary btn-sm" disabled={actionsDisabled} onClick={() => send(action)}>{label}</button>)}
       </div>}
@@ -173,9 +183,10 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
         {can('answer_probe') && composer('answer_probe', 'Reply to the tutor', 'Send reply')}
         {session.practice_active && can('submit_practice') && composer('submit_practice', 'Practice reasoning and justification', 'Submit guided practice', true)}
         {!session.practice_active && can('submit_answer') && <details className="revision-panel" open><summary>Ready to revise the original answer?</summary>{composer('submit_answer', 'Revised explanation of the original case', 'Submit revised answer →', true)}</details>}
-        {can('continue') && <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={() => send('continue')}>Continue to independent fresh case →</button>}
+        {can('continue') && <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={() => send('continue')}>⚡ Ready for unfamiliar case challenge →</button>}
       </>}
-      {session.stage === 'apply' && can('submit_answer') && composer('submit_answer', 'Independent reasoning for this fresh case', 'Submit fresh case and view report →', true)}
+      {session.stage === 'apply' && can('submit_answer') && composer('submit_answer', 'Explain what happens in this unfamiliar case and why', 'Submit unfamiliar case & view comparison report →', true)}
+
       {(session.attempts || []).length > 0 && <details className="earlier-answers-panel"><summary className="earlier-answers-summary">Earlier submitted answers ({session.attempts?.length})</summary><div className="attempts-stack">{session.attempts?.map(attempt => <AttemptView key={attempt.id} attempt={attempt} />)}</div></details>}
       {can('finish_session') && <div className="finish-session-panel"><p>You can finish with the evidence collected so far. Unattempted stages will remain unassessed.</p>{pending && session.processing_status === 'failed' && <p>Failed processing will stop. Your saved answer remains in the partial evidence report.</p>}<button type="button" className="btn btn-secondary" disabled={submitting || (Boolean(pending) && session.processing_status !== 'failed')} onClick={() => send('finish_session')}>{pending && session.processing_status === 'failed' ? 'Finish partial report' : 'Finish with current evidence'}</button></div>}
     </div>}

@@ -5,7 +5,7 @@ import { supportLabel } from '../lib/sessionDrafts'
 import type { AttemptReport, SessionReport, SkillComparison, SkillEvidence } from '../types'
 
 export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }> = ({ attempt, anchor = true }) => <div className="attempt-card card-flat" id={anchor ? `attempt-${attempt.id}` : undefined}>
-  <div className="attempt-card-topbar"><span className="attempt-index-tag">{attempt.stage === 'practice' || ['practice', 'guided_practice'].includes(attempt.case_type) ? 'Guided practice' : attempt.stage === 'investigate' ? 'Revised reasoning' : attempt.stage === 'apply' ? 'Fresh case' : 'Baseline case'}</span><span className="support-badge">{supportLabel(attempt.support_level)}</span></div>
+  <div className="attempt-card-topbar"><span className="attempt-index-tag">{attempt.stage === 'practice' || ['practice', 'guided_practice'].includes(attempt.case_type) ? 'Guided practice' : attempt.stage === 'investigate' ? 'Revised reasoning' : attempt.stage === 'apply' ? 'Fresh case' : 'Baseline case'}</span><span className="support-badge">{supportLabel(attempt.support_level)}</span>{attempt.score !== undefined && attempt.score !== null && <span className="badge badge-reviewed" style={{ marginLeft: 'auto' }}>{attempt.score}% ({attempt.met_criteria_count}/{attempt.total_criteria_count} criteria met)</span>}</div>
   <div className="attempt-scenario-box"><span className="attempt-box-label">Scenario</span><div className="attempt-box-content">{attempt.scenario_text}</div></div>
   <div className="attempt-answer-box"><span className="attempt-box-label">Submitted reasoning</span><div className="attempt-box-content">{attempt.answer_text}</div></div>
   {attempt.provenance_warning && <p className="report-disclaimer-box" role="note">{attempt.provenance_warning}</p>}
@@ -39,6 +39,28 @@ export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; histor
 
 export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; onOpenSession?: (id: string) => void; onRetryAssessments?: () => void; retryDisabled?: boolean }> = ({ report, onBack, onOpenSession, onRetryAssessments, retryDisabled }) => <article className="card report-card" aria-labelledby="report-heading">
   <div className="report-header-banner"><div className="report-badge-row"><span className={`outcome-status-badge outcome-${report.outcome}`}>{report.outcome === 'no_gap' ? 'NO GAP IN TESTED CASES' : report.outcome === 'gap_found' ? 'CRITERIA NEEDING ATTENTION' : 'ASSESSMENT INCONCLUSIVE'}</span><span className={`badge ${report.assessment_status === 'reviewed' ? 'badge-reviewed' : 'badge-provisional'}`}>{report.assessment_status === 'reviewed' ? 'Human reviewed' : 'Provisional AI assessment'}</span></div><h2 id="report-heading" className="report-title">{report.concept_title} — Evidence report</h2><p>{report.outcome_reason}</p></div>
+  {report.final_score !== undefined && report.final_score !== null && (
+    <div className="understanding-banner card-flat" style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', background: 'var(--bg-surface-alt)', borderRadius: '6px', border: '1px solid var(--border-color, #ccc)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div>
+          <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Concept Understanding</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{report.final_score}%</div>
+        </div>
+        {report.initial_score !== undefined && report.initial_score !== null && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Initial Baseline: {report.initial_score}%</div>
+            {report.score_change !== undefined && report.score_change !== null && (
+              <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: report.score_change >= 0 ? 'var(--mint, #10b981)' : '#ef4444' }}>
+                {report.score_change >= 0 ? `+${report.score_change}% Growth` : `${report.score_change}%`}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {report.score_summary && <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{report.score_summary}</p>}
+    </div>
+  )}
+
   <p className="report-disclaimer-box">Evidence reflects the cases attempted and the support received. A short session does not establish complete mastery or prove that tutoring caused a change. Authored cases remain unreviewed until a person reviews them.</p>
   {onRetryAssessments && report.attempts.some(attempt => !attempt.criteria.length || attempt.criteria.some(criterion => criterion.rating === 'technical_failure')) && <section className="card-flat recovery-card" aria-label="Assessment recovery"><strong>Some saved answers could not be assessed</strong><p>Retry assessment of those saved answers. This keeps the learner’s original submissions and preserves human-reviewed judgments.</p><button type="button" className="btn btn-secondary" disabled={retryDisabled} onClick={onRetryAssessments}>Retry unavailable assessments</button></section>}
   <section className="report-evidence-section"><h3>Matched skills across cases</h3>{report.skill_comparisons?.length ? <SkillComparisons comparisons={report.skill_comparisons} /> : <p>No matched skill comparison is available for this older session. Its original evidence remains below.</p>}</section>

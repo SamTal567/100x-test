@@ -85,6 +85,7 @@ export interface SessionDetail {
   id: string
   concept_id: string
   concept_title?: string
+  concept_slug?: string
   stage: 'diagnostic' | 'investigate' | 'apply' | 'review' | 'completed'
   version: number
   current_prompt: CasePrompt | null
@@ -215,6 +216,9 @@ export interface AttemptReport {
   cloze_state?: Record<string, unknown> | null
   criteria: CriterionAssessment[]
   support_level: string
+  score?: number | null
+  met_criteria_count?: number | null
+  total_criteria_count?: number | null
 }
 
 export interface SkillEvidence {
@@ -248,6 +252,10 @@ export interface SessionReport {
   previous_sessions?: { session_id: string; created_at: string; outcome: string; skill_comparisons: SkillComparison[] }[]
   assessment_status: 'provisional' | 'reviewed'
   outcome_reason: string
+  initial_score?: number | null
+  final_score?: number | null
+  score_change?: number | null
+  score_summary?: string | null
 }
 
 export interface TranscriptionResult {

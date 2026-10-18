@@ -167,6 +167,9 @@ class AttemptReport(BaseModel):
     gap_id: Optional[str] = None
     processing_status: str = "complete"
     created_at: Optional[datetime] = None
+    score: Optional[int] = None
+    met_criteria_count: Optional[int] = None
+    total_criteria_count: Optional[int] = None
 
     @field_validator("diagram_preset", "cloze_preset", mode="before")
     @classmethod
@@ -187,12 +190,18 @@ class SessionReport(BaseModel):
     skill_comparisons: list[dict] = Field(default_factory=list)
     previous_sessions: list[dict] = Field(default_factory=list)
     processing_status: str = "idle"
+    initial_score: Optional[int] = None
+    final_score: Optional[int] = None
+    score_change: Optional[int] = None
+    score_summary: Optional[str] = None
+
 
 
 class SessionOut(BaseModel):
     id: str
     concept_id: str
     concept_title: str = ""
+    concept_slug: str = ""
     stage: str
     version: int
     current_prompt: Optional[CasePromptOut] = None

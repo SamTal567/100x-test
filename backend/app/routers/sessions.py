@@ -261,6 +261,7 @@ def _session_to_out(session: Session, db: DBSession) -> SessionOut:
         id=session.id,
         concept_id=session.concept_id,
         concept_title=session.concept.title if session.concept else "Concept Check",
+        concept_slug=session.concept.slug if session.concept else "",
         stage=session.stage,
         version=session.version,
         current_prompt=current_prompt,

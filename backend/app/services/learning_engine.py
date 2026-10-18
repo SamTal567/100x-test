@@ -372,7 +372,14 @@ class SessionService:
             self._message(session, messages, "No unused authored scenario is available for this concept. Your evidence is saved; unfamiliar-case application remains unassessed.")
             return
         session.stage, session.current_prompt_id = "apply", case.id
-        self._message(session, messages, "Try this unfamiliar scenario independently. It tests prepared criteria for the same principle; no hints or teaching are supplied during this step.")
+        facts = "\n".join(f"- {a}" for a in (case.assumptions or []))
+        scenario_msg = (
+            f"Here is your unfamiliar scenario to test your understanding:\n\n"
+            f"> {case.scenario_text}"
+            + (f"\n\n**Stated assumptions:**\n{facts}" if facts else "")
+            + "\n\nExplain what happens in this unfamiliar case and why. Once submitted, your final understanding score and comparison report will be generated."
+        )
+        self._message(session, messages, scenario_msg)
 
     def _clarify(self, session, turn, messages):
         case = self.db.get(CasePrompt, session.current_prompt_id)

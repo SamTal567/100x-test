@@ -14,6 +14,12 @@ def attempt_reports(db, session):
         criteria = [{"criterion": c.criterion, "skill_id": c.skill_id, "rating": c.rating,
             "met": c.met, "evidence": c.evidence, "status": c.status, "reviewer_notes": c.reviewer_notes}
             for c in attempt.criterion_assessments]
+        crit_list = [c for c in criteria if not (c.get("skill_id") or "").startswith("exercise:")]
+        if not crit_list:
+            crit_list = criteria
+        total_count = len(crit_list)
+        met_count = len([c for c in crit_list if c.get("met") is True])
+        attempt_score = round((met_count / total_count) * 100) if total_count > 0 else None
         reports.append(AttemptReport(id=attempt.id, case_prompt_id=attempt.case_prompt_id,
             case_version=snapshot.get("version") if has_snapshot else None, rubric_version=attempt.rubric_version,
             provenance_warning=None if has_snapshot else "This legacy attempt has no frozen case snapshot. The displayed case is the current reference; its original wording and support history cannot be established.",
@@ -24,7 +30,7 @@ def attempt_reports(db, session):
             diagram_state=attempt.diagram_state, cloze_state=attempt.cloze_state, criteria=criteria,
             support_level=(attempt.support_level or "unknown") if has_snapshot else "unknown",
             processing_status=attempt.processing_status or "complete", created_at=attempt.created_at,
-            gap_id=attempt.gap_id))
+            gap_id=attempt.gap_id, score=attempt_score, met_criteria_count=met_count, total_criteria_count=total_count))
     return reports
 
 
@@ -104,6 +110,32 @@ def build_report(db, session, include_history=True):
             other = build_report(db, earlier, include_history=False)
             previous.append({"session_id": earlier.id, "created_at": earlier.created_at.isoformat(),
                 "outcome": other.outcome, "skill_comparisons": other.skill_comparisons})
+
+    baseline_attempts = [a for a in reports if a.stage == "diagnostic"]
+    baseline_crit = [c for a in baseline_attempts for c in a.criteria if not (c.get("skill_id") or "").startswith("exercise:")]
+    baseline_total = len(baseline_crit)
+    baseline_met = len([c for c in baseline_crit if c.get("met") is True])
+    initial_score = round((baseline_met / baseline_total) * 100) if baseline_total > 0 else None
+
+    final_attempts = [a for a in reports if a.stage == "apply"]
+    if not final_attempts:
+        final_attempts = [a for a in reports if a.stage == "investigate"]
+    final_crit = [c for a in final_attempts for c in a.criteria if not (c.get("skill_id") or "").startswith("exercise:")]
+    final_total = len(final_crit)
+    final_met = len([c for c in final_crit if c.get("met") is True])
+    final_score = round((final_met / final_total) * 100) if final_total > 0 else None
+
+    score_change = None
+    score_summary = None
+    if initial_score is not None and final_score is not None:
+        score_change = final_score - initial_score
+        sign = "+" if score_change >= 0 else ""
+        score_summary = f"Baseline: {initial_score}% → Final: {final_score}% ({sign}{score_change}% growth)"
+    elif final_score is not None:
+        score_summary = f"Understanding: {final_score}%"
+    elif initial_score is not None:
+        score_summary = f"Baseline: {initial_score}%"
+
     return SessionReport(session_id=session.id, concept_title=concept.title if concept else "", stage=session.stage,
         outcome=outcome, outcome_reason=reason, assessment_status="reviewed" if reviewed else "provisional",
         gaps=[GapReport(id=g.id, description=g.description, evidence_quote=g.evidence_quote,
@@ -111,4 +143,6 @@ def build_report(db, session, include_history=True):
         attempts=reports, interventions_used=[{"id": i.id, "type": i.intervention_type, "title": i.title,
             "status": i.status, "url": i.url, "content": i.content, "opened": i.opened_at is not None, "completed": i.completed_at is not None,
             "created_at": i.created_at.isoformat()} for i in interventions], skill_comparisons=skill_comparisons(reports),
-        previous_sessions=previous, processing_status=session.processing_status or "idle")
+        previous_sessions=previous, processing_status=session.processing_status or "idle",
+        initial_score=initial_score, final_score=final_score, score_change=score_change, score_summary=score_summary)
+
