@@ -540,7 +540,7 @@ def build_report(db, session, include_history=True):
             or a.case_type.replace("_", " ").capitalize()
         )
         qparts = a.question_parts or []
-        qpart_map = {p.get("id"): p for p in qparts if isinstance(p, dict) and "id" in p}
+        qpart_map = {(p.get("id") or p.get("part_id")): p for p in qparts if isinstance(p, dict) and (p.get("id") or p.get("part_id"))}
         for c in a.criteria:
             if (c.get("skill_id") or "").startswith("exercise:"):
                 continue

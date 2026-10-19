@@ -134,7 +134,7 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
     # Validate / match question_part_id against question_parts
     part_desc = None
     if question_parts and isinstance(question_parts, list):
-        part_map = {p["id"]: p for p in question_parts if isinstance(p, dict) and "id" in p}
+        part_map = {(p.get("id") or p.get("part_id")): p for p in question_parts if isinstance(p, dict) and (p.get("id") or p.get("part_id"))}
         if question_part_id and question_part_id in part_map:
             part_desc = part_map[question_part_id].get("description")
         else:
@@ -143,7 +143,7 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
                 if isinstance(p, dict) and criterion_id and (criterion_id in p.get("criterion_ids", []))
             ]
             if len(matching_parts) == 1:
-                question_part_id = matching_parts[0]["id"]
+                question_part_id = matching_parts[0].get("id") or matching_parts[0].get("part_id")
                 part_desc = matching_parts[0].get("description")
             else:
                 question_part_id = None

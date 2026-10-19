@@ -201,11 +201,19 @@ class OpenAIAdapter:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=500,
+                max_tokens=1000,
                 json_mode=True,
             )
 
-            content = response.choices[0].message.content
+            content = (response.choices[0].message.content or "").strip()
+            if content.startswith("```"):
+                lines = content.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                content = "\n".join(lines).strip()
+
             data = json.loads(content)
             if not isinstance(data, dict) or type(data.get("gap_found")) is not bool:
                 raise ValueError("Gap response must explicitly include gap_found")
@@ -217,13 +225,16 @@ class OpenAIAdapter:
                 logger.warning("AI quoted text not found in learner answer; cleared quote")
 
             if data.get("gap_found") and not data.get("evidence_quote"):
-                return GapAnalysis(status="error", description="Gap proposal lacked verifiable answer evidence.")
+                desc = (data.get("description") or "").lower()
+                is_omission = any(w in desc for w in ["miss", "omit", "unanswer", "not mention", "did not answer", "did not address", "left out"])
+                if not is_omission:
+                    return GapAnalysis(status="error", description="Gap proposal lacked verifiable answer evidence.")
             data["status"] = "complete"
 
             return GapAnalysis(**data)
 
         except Exception as e:
-            logger.error("OpenAI analyse_answer failed: %s", type(e).__name__)
+            logger.exception("OpenAI analyse_answer failed: %s (%s)", type(e).__name__, e)
             return GapAnalysis(
                 gap_found=False,
                 description=f"[AI error] Analysis failed: {type(e).__name__}",
@@ -299,11 +310,19 @@ class OpenAIAdapter:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=1200,
+                max_tokens=3000,
                 json_mode=True,
             )
 
-            content = response.choices[0].message.content
+            content = (response.choices[0].message.content or "").strip()
+            if content.startswith("```"):
+                lines = content.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                content = "\n".join(lines).strip()
+
             data = json.loads(content)
             if not isinstance(data, dict) or not isinstance(data.get("criteria"), list):
                 raise ValueError("Assessment must explicitly return criteria")
@@ -342,7 +361,7 @@ class OpenAIAdapter:
                     cov = cov or "unanswered"
                     issue = issue or "missing_requested_part"
                     if not exp or "did not answer" not in exp.lower():
-                        part_obj = next((qp for qp in (question_parts or []) if qp["id"] == qpart_id), None)
+                        part_obj = next((qp for qp in (question_parts or []) if (qp.get("id") or qp.get("part_id")) == qpart_id), None)
                         p_desc = part_obj["description"] if part_obj else "address this requirement"
                         exp = f"You did not answer the part asking you to {p_desc}."
                 elif met is not None and evidence:
@@ -375,7 +394,9 @@ class OpenAIAdapter:
             validated_parts = []
             returned_parts = {p.get("question_part_id"): p for p in data.get("question_parts_coverage", []) if isinstance(p, dict)}
             for qp in (question_parts or []):
-                qp_id = qp["id"]
+                qp_id = qp.get("id") or qp.get("part_id")
+                if not qp_id:
+                    continue
                 p_data = returned_parts.get(qp_id, {})
                 cov = p_data.get("coverage", "unanswered")
                 if cov not in ("answered", "partially_answered", "unanswered", "unclear"):
@@ -392,7 +413,7 @@ class OpenAIAdapter:
                     p_ev = ""
                     issue = "missing_requested_part"
                     if not p_exp or "did not answer" not in p_exp.lower():
-                        p_exp = f"You did not answer the part asking you to {qp['description']}."
+                        p_exp = f"You did not answer the part asking you to {qp.get('description', 'address this requirement')}."
                 elif p_ev and p_ev.strip().lower() not in answer.lower():
                     p_ev = ""
                     cov = "unclear"
@@ -418,7 +439,7 @@ class OpenAIAdapter:
             )
 
         except Exception as e:
-            logger.error("OpenAI assess_attempt failed: %s", type(e).__name__)
+            logger.exception("OpenAI assess_attempt failed: %s (%s)", type(e).__name__, e)
             return AssessmentResult(
                 summary=f"[AI error] Assessment failed: {type(e).__name__}",
                 criteria=[],

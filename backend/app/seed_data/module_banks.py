@@ -159,6 +159,7 @@ def criterion(skill, applicability=None):
 
 def qpart(part_id, description, skill_ids, criteria_names=None, assessment_guidance="", acceptable_alternatives=None, supplementary=False):
     return {
+        "id": part_id,
         "part_id": part_id,
         "description": description,
         "skill_ids": list(skill_ids),
