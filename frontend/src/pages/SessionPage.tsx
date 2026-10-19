@@ -8,6 +8,8 @@ import { SessionTranscript } from '../components/SessionTranscript'
 import { AttemptView, ReportView } from '../components/ReportView'
 import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
 import { HelpMenu } from '../components/HelpMenu'
+import { initialTutoringView, tutoringViewKey } from '../lib/tutoringView'
+import type { TutoringView } from '../lib/tutoringView'
 import { applyDictation, editDraftText } from '../lib/dictation'
 import { openTrackedResource } from '../lib/trackedResources'
 import { draftKey, emptyDraft, pendingKey, readStored, savedPending, writeStored } from '../lib/sessionDrafts'
@@ -79,12 +81,23 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   const [resourceError, setResourceError] = useState<string | null>(null)
   const [pending, setPending] = useState<TurnRequest | null>(() => savedPending(sessionId))
   const [utility, setUtility] = useState<'clarify' | 'correct_ai' | null>(null)
-  const [investigateMode, setInvestigateMode] = useState<'tutoring' | 'revision'>('tutoring')
+  const [investigateMode, setInvestigateMode] = useState<TutoringView>('summary')
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const chatRef = useRef<HTMLDivElement>(null)
+  const viewInitialized = useRef(false)
+  const changeTutoringView = (view: TutoringView) => {
+    setInvestigateMode(view)
+    writeStored(tutoringViewKey(sessionId), view)
+    setUtility(null)
+    headingRef.current?.focus({ preventScroll: true })
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
 
   const applyHydration = useCallback(async (state: SessionDetail) => {
     setSession(state)
+    if (!viewInitialized.current) {
+      setInvestigateMode(initialTutoringView(readStored(tutoringViewKey(sessionId)), state.messages || []))
+      viewInitialized.current = true
+    }
     if (state.pending_turn) {
       setPending(state.pending_turn)
       writeStored(pendingKey(sessionId), state.pending_turn)
@@ -123,7 +136,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
       if (failed) setError('Your submission is saved. Processing did not finish. Retry the saved request to resume it without submitting another answer.')
       if (!failed && (response.stage !== session?.stage || response.current_prompt?.id !== session?.current_prompt?.id)) {
         headingRef.current?.focus()
-        setInvestigateMode('tutoring')
+        if (response.stage === 'investigate') changeTutoringView(session?.stage === 'diagnostic' ? 'summary' : 'tutoring')
       }
       return !failed
     } catch (reason) {
@@ -191,7 +204,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   if (loading) return <div className="loading-container" role="status"><span className="spinner" />Restoring learning session…</div>
   if (!session) return <div className="error-banner" role="alert"><span>{error || 'This session could not be loaded.'}</span><button className="btn btn-secondary" onClick={onBackToCatalogue}>Catalogue</button></div>
 
-  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Unfamiliar Case — Application & Evaluation' : session.practice_active ? 'Guided practice — Support is recorded' : investigateMode === 'revision' ? 'Answer revision — Incorporating tutoring' : 'Investigation and tutoring'
+  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Unfamiliar Case — Application & Evaluation' : session.practice_active ? 'Guided practice — Support is recorded' : investigateMode === 'revision' ? 'Answer revision — Incorporating tutoring' : investigateMode === 'summary' ? 'Your diagnostic summary' : investigateMode === 'reference' ? 'Question and original answers' : 'Chat with your tutor'
 
   return <div className="session-page-wrapper">
     <div className="card session-topbar mb-4">
@@ -372,6 +385,64 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
         </div>
       )}
 
+      {session.stage === 'investigate' && !session.practice_active && investigateMode === 'summary' && (
+        <div className="diagnostic-review-workspace">
+          <section className="card diagnostic-handoff">
+            <h2>Your diagnostic is saved</h2>
+            <p>Here is a first look at your answers. Next, talk through one question at a time with your tutor.</p>
+            <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={() => changeTutoringView('tutoring')}>Continue to tutor chat →</button>
+            <p className="muted-note">AI feedback is provisional. You can clarify anything the tutor misunderstood.</p>
+          </section>
+          <DiagnosticFeedback
+            attempts={session.attempts || []}
+            conceptSlug={session.concept_slug}
+            conceptTitle={session.concept_title}
+            nextQuestion={firstTutorProbe || undefined}
+            onRetryAssessment={can('retry_processing') ? () => { void send('retry_processing') } : undefined}
+            disabled={actionsDisabled}
+            onOpenResource={confirmResourceOpening}
+          />
+
+        </div>
+      )}
+
+      {session.stage === 'investigate' && !session.practice_active && investigateMode === 'reference' && (
+        <div className="tutor-reference-workspace">
+          <button type="button" className="btn btn-secondary tutor-return" onClick={() => changeTutoringView('tutoring')}>← Back to chat</button>
+          <section className="contextual-reference-panel mb-3" aria-label="Question and original answers">
+            <h2 className="contextual-reference-summary">Question and original answers</h2>
+            <div className="contextual-reference-content p-3">
+              {prompt && <PromptView prompt={prompt} />}
+              {sourceAttempts.length > 0 && (
+                <div className="mt-3">
+                  <h4 className="text-sm font-semibold mb-2">Your original baseline answer:</h4>
+                  {sourceAttempts.map(attempt => (
+                    <div key={attempt.id} className="reference-answer">
+                      <blockquote style={{ whiteSpace: 'pre-wrap' }}>{attempt.answer_text}</blockquote>
+                      {attempt.diagram_preset && <PresetDiagramView diagram={attempt.diagram_preset} value={attempt.diagram_state || null} readOnly />}
+                      {attempt.cloze_preset && <ClozeExerciseView cloze={attempt.cloze_preset} value={attempt.cloze_state as Record<string, string> | null} readOnly />}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(session.evidence_cards || []).length > 0 && (
+                <div className="mt-3">
+                  <h4 className="text-sm font-semibold mb-2">Baseline diagnostic findings:</h4>
+                  {(session.evidence_cards || []).map((card, index) => (
+                    <div className="gap-finding-card mb-2" key={card.id || index}>
+                      <strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>
+                      {card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}
+                      {card.probe_question && <p className="text-sm">Follow-up: {card.probe_question}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+        </div>
+      )}
+
       {/* Stage: Investigate - Dedicated Revision Workspace */}
       {session.stage === 'investigate' && !session.practice_active && investigateMode === 'revision' && (
         <div className="revision-workspace">
@@ -379,7 +450,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={() => setInvestigateMode('tutoring')}
+              onClick={() => changeTutoringView('tutoring')}
             >
               ← Return to tutoring conversation
             </button>
@@ -439,57 +510,16 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
       {/* Stage: Investigate - Primary Tutoring Workspace */}
       {session.stage === 'investigate' && !session.practice_active && investigateMode === 'tutoring' && (
         <div className="tutoring-workspace">
-          <div className="tutoring-case-indicator mb-3">
-            <span className="case-indicator-badge">Tutoring Focus</span>
-            <span className="case-indicator-title">
-              {prompt?.case_type ? `${prompt.case_type.replaceAll('_', ' ')} scenario` : 'Baseline diagnostic scenario'}
-            </span>
-          </div>
-
-          <DiagnosticFeedback
-            attempts={session.attempts || []}
-            conceptSlug={session.concept_slug}
-            conceptTitle={session.concept_title}
-            nextQuestion={firstTutorProbe || undefined}
-            onScrollToChat={() => chatRef.current?.scrollIntoView({ behavior: 'smooth' })}
-            onRetryAssessment={can('retry_processing') ? () => { void send('retry_processing') } : undefined}
-            disabled={actionsDisabled}
-            onOpenResource={confirmResourceOpening}
-          />
-
-          <details className="contextual-reference-panel mb-3">
-            <summary className="contextual-reference-summary">
-              📖 View original scenario, stated assumptions & baseline answer
-            </summary>
-            <div className="contextual-reference-content p-3">
-              {prompt && <PromptView prompt={prompt} />}
-              {sourceAttempts.length > 0 && (
-                <div className="mt-3">
-                  <h4 className="text-sm font-semibold mb-2">Your original baseline answer:</h4>
-                  {sourceAttempts.map(attempt => (
-                    <AttemptView key={attempt.id} attempt={attempt} anchor={false} />
-                  ))}
-                </div>
-              )}
-              {(session.evidence_cards || []).length > 0 && (
-                <div className="mt-3">
-                  <h4 className="text-sm font-semibold mb-2">Baseline diagnostic findings:</h4>
-                  {(session.evidence_cards || []).map((card, index) => (
-                    <div className="gap-finding-card mb-2" key={card.id || index}>
-                      <strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>
-                      {card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}
-                      {card.probe_question && <p className="text-sm">Follow-up: {card.probe_question}</p>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </details>
-
-          <div ref={chatRef} className="tutoring-chat-wrapper">
+          <nav className="tutor-view-nav" aria-label="Tutoring workspace">
+            <button type="button" className="btn btn-secondary btn-sm" disabled={actionsDisabled} onClick={() => changeTutoringView('summary')}>Review diagnostic</button>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={actionsDisabled} onClick={() => changeTutoringView('reference')}>View question</button>
+          </nav>
+          <div className="tutor-chat-surface">
+          <div className="tutoring-chat-wrapper">
             <SessionTranscript
               messages={session.messages || []}
               stage={session.stage}
+              focused
               onOpenResource={confirmResourceOpening}
               disabled={actionsDisabled || !can('resource_opened')}
             />
@@ -553,7 +583,9 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
             )}
           </div>
 
-          <div className="revision-progression-bar card p-3 mt-4">
+          </div>
+          <details className="tutor-next-step">
+            <summary>Ready for the next step?</summary>
             <div className="progression-callout-content">
               <div>
                 <h3 className="progression-callout-title">Ready to revise your answer?</h3>
@@ -565,7 +597,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
                 type="button"
                 className="btn btn-primary"
                 disabled={actionsDisabled}
-                onClick={() => setInvestigateMode('revision')}
+                onClick={() => changeTutoringView('revision')}
               >
                 Review and revise my answer →
               </button>
@@ -588,7 +620,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
                 </div>
               </details>
             )}
-          </div>
+          </details>
         </div>
       )}
 
@@ -667,7 +699,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
       )}
 
       {/* Earlier Submitted Answers Accordion */}
-      {(session.attempts || []).length > 0 && (
+      {(session.attempts || []).length > 0 && !(session.stage === 'investigate' && investigateMode === 'tutoring' && !session.practice_active) && (
         <details className="earlier-answers-panel mt-4">
           <summary className="earlier-answers-summary">
             All submitted answers in this session ({session.attempts?.length})

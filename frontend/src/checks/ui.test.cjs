@@ -26,6 +26,35 @@ const { AuthModal } = require('../components/AuthModal.tsx')
 const { AuthPage } = require('../pages/AuthPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
+test('focused tutoring excludes diagnostic submissions while the report retains them', () => {
+  const messages = [
+    { id: 'baseline', stage: 'diagnostic', role: 'learner', content: 'Original diagnostic answer' },
+    { id: 'probe', stage: 'investigate', role: 'tutor', content: 'What does the startup routine read?' },
+  ]
+  const chat = render(SessionTranscript, { messages, stage: 'investigate', focused: true })
+  assert.doesNotMatch(chat, /Original diagnostic answer|Earlier diagnostic submissions/)
+  assert.match(chat, /What does the startup routine read\?/)
+  assert.match(render(SessionTranscript, { messages, stage: 'completed', open: true }), /Original diagnostic answer/)
+})
+
+test('diagnostic required-part explanations sit inside the closed details disclosure', () => {
+  const html = render(DiagnosticFeedback, { attempts: [{ id: 'a', stage: 'diagnostic', criteria: [],
+    question_parts: [{ id: 'p', prompt_text: 'Explain startup recovery', coverage: 'unanswered', feedback: 'Missing startup recovery' }] }] })
+  const details = html.indexOf('<details class="diagnostic-details-accordion"')
+  assert.ok(details >= 0)
+  assert.ok(html.indexOf('diagnostic-part-feedback') > details)
+  assert.doesNotMatch(html, /<details[^>]*\sopen/)
+})
+
+test('new diagnostic sessions open a summary while returning tutor sessions resume chat', () => {
+  const { initialTutoringView } = require('../lib/tutoringView.ts')
+  assert.equal(initialTutoringView(null, [{ stage: 'investigate', role: 'tutor' }]), 'summary')
+  assert.equal(initialTutoringView(null, [{ stage: 'investigate', role: 'learner' }]), 'tutoring')
+  assert.equal(initialTutoringView('tutoring', []), 'tutoring')
+  assert.equal(initialTutoringView('summary', [{ stage: 'investigate', role: 'learner' }]), 'summary')
+  assert.equal(initialTutoringView('invalid', []), 'summary')
+})
+
 test('dictation review starts with cleaned text while retaining the exact provider original', () => {
   const { transcriptionDraft } = require('../lib/dictation.ts')
   const raw = '<|speaker:0|>The record [pause] persists.'

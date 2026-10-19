@@ -10,7 +10,6 @@ interface DiagnosticFeedbackProps {
   conceptSlug?: string
   conceptTitle?: string
   nextQuestion?: string
-  onScrollToChat?: () => void
   onRetryAssessment?: () => void
   disabled?: boolean
   onOpenResource?: ResourceOpening
@@ -42,12 +41,12 @@ export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
     <div className="diagnostic-summary-body">
       {demonstratedNames.length > 0 && <div className="diagnostic-summary-item">
         <span className="diagnostic-item-badge badge-demonstrated">✓ Demonstrated</span>
-        <p className="diagnostic-item-text">{demonstratedNames.join(' · ')}</p>
+        <p className="diagnostic-item-text">{demonstratedNames.slice(0, 3).join(' · ')}{demonstratedNames.length > 3 ? ` · ${demonstratedNames.length - 3} more in details` : ''}</p>
       </div>}
 
       {clarificationNames.length > 0 && <div className="diagnostic-summary-item">
         <span className="diagnostic-item-badge badge-clarification">? Needs clarification</span>
-        <p className="diagnostic-item-text">{clarificationNames.join(' · ')}</p>
+        <p className="diagnostic-item-text">{clarificationNames.slice(0, 3).join(' · ')}{clarificationNames.length > 3 ? ` · ${clarificationNames.length - 3} more in details` : ''}</p>
       </div>}
 
       {nextQuestion && <div className="diagnostic-summary-item next-focus-item">
@@ -61,6 +60,9 @@ export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
       </div>}
     </div>
 
+    <details className="diagnostic-details-accordion">
+      <summary className="diagnostic-details-toggle">View diagnostic details (per-answer evidence)</summary>
+      <div className="diagnostic-details-content mt-3">
     {baseline.some(attempt => attempt.question_parts?.some(part => !part.supplementary)) && <div className="diagnostic-part-feedback">
       {baseline.map((attempt, index) => <div key={attempt.id || index}>
         <h4>Case {index + 1}</h4>
@@ -68,9 +70,6 @@ export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
       </div>)}
     </div>}
 
-    <details className="diagnostic-details-accordion">
-      <summary className="diagnostic-details-toggle">View diagnostic details (per-answer evidence)</summary>
-      <div className="diagnostic-details-content mt-3">
         <p className="muted-note">Detailed baseline criteria across your submitted answers. Distinctions between answers are preserved below.</p>
         <div className="comparison-columns">
           {Object.entries(groups).filter(([, rows]) => rows.length).map(([rating, rows]) => <div className="card-flat" key={rating}>

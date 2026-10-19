@@ -2940,3 +2940,39 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
     padding-bottom: 0 !important;
   }
 }
+
+/* Separate diagnostic review from the active tutoring conversation. */
+@media screen {
+  .diagnostic-handoff { margin-bottom: var(--space-4); }
+  .diagnostic-handoff h2 { font-size: 1.25rem; text-wrap: balance; }
+  .diagnostic-handoff p { margin: var(--space-3) 0; max-width: 65ch; }
+  .tutor-view-nav { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+  .tutor-chat-surface { border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-surface); }
+  .tutor-chat-surface .chat-section { border: 0; box-shadow: none; margin: 0; background: transparent; }
+  .focused-chat .chat-title { font-size: 1.2rem; margin-bottom: var(--space-1); }
+  .focused-chat .chat-hint-note { display: block; font-size: .85rem; color: var(--text-muted); margin-bottom: var(--space-4); }
+  .focused-chat .chat-messages { display: flex; flex-direction: column; gap: var(--space-4); max-height: clamp(200px, 36dvh, 480px); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-2); scrollbar-gutter: stable; }
+  .focused-chat .chat-message { flex: 0 0 auto; max-width: 90%; }
+  .focused-chat .message-learner { align-self: flex-end; }
+  .focused-chat .message-text { display: block; padding: var(--space-3); line-height: 1.6; }
+  .tutor-chat-surface .tutoring-composer-area { border-top: 1px solid var(--border-light); padding: var(--space-3) var(--space-4); }
+  .tutor-chat-surface .answer-card { border: 0; box-shadow: none; padding: 0; }
+  .tutor-chat-surface .answer-textarea { min-height: 80px; margin-bottom: 0; }
+  .tutor-chat-surface .answer-guide-tip { font-size: .72rem; }
+  .tutor-next-step { margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-surface); }
+  .tutor-next-step > summary { cursor: pointer; font-weight: 600; color: var(--text-primary); }
+  .tutor-next-step .progression-callout-content { padding-top: var(--space-3); }
+  .tutor-return { margin-bottom: var(--space-3); }
+  .diagnostic-summary-header { flex-wrap: wrap; gap: var(--space-2); }
+  .diagnostic-part-feedback { margin-bottom: var(--space-4); }
+}
+@media screen and (max-width: 600px) {
+  .focused-chat .chat-message { max-width: 100%; }
+  .diagnostic-summary-item { flex-direction: column; }
+  .tutor-chat-surface .answer-actions-bar { flex-direction: row; align-items: center; }
+  .tutor-chat-surface .answer-guide-tip { display: none; }
+  .session-topbar .stage-subtext { display: none; }
+  .session-topbar .stage-progress { flex-direction: row; flex-wrap: wrap; gap: var(--space-3); }
+  .session-topbar .stage-dot { width: 24px; height: 24px; font-size: .75rem; }
+  .session-topbar .stage-label { font-size: .72rem; }
+}

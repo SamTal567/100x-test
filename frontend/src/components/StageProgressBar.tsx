@@ -14,10 +14,10 @@ interface StageItem {
 }
 
 const STAGES: StageItem[] = [
-  { key: 'diagnostic', label: '1. Baseline Reasoning', shortDesc: 'Explain what happens and why' },
-  { key: 'investigate', label: '2. Targeted Follow-up', shortDesc: 'Clarify specific reasoning' },
-  { key: 'apply', label: '3. Fresh Scenario', shortDesc: 'Apply principles to a new case' },
-  { key: 'review', label: '4. Evidence Report', shortDesc: 'Review findings & assistance history' },
+  { key: 'diagnostic', label: '1. Diagnostic', shortDesc: 'Explain what happens and why' },
+  { key: 'investigate', label: '2. Tutor chat', shortDesc: 'Clarify specific reasoning' },
+  { key: 'apply', label: '3. Fresh scenario', shortDesc: 'Apply principles to a new case' },
+  { key: 'review', label: '4. Report', shortDesc: 'Review findings & assistance history' },
 ]
 
 export const StageProgressBar: React.FC<StageProgressBarProps> = ({

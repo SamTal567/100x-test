@@ -1,9 +1,16 @@
-﻿import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { MessageContent } from './MessageContent'
 import type { Message, SessionDetail } from '../types'
 import type { ResourceOpening } from './TrackedResourceLink'
 
-export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDetail['stage']; onOpenResource?: ResourceOpening; disabled?: boolean; open?: boolean }> = ({ messages, stage, onOpenResource, disabled, open = false }) => {
+export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDetail['stage']; onOpenResource?: ResourceOpening; disabled?: boolean; open?: boolean; focused?: boolean }> = ({ messages, stage, onOpenResource, disabled, open = false, focused = false }) => {
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const followLatest = useRef(true)
+  useEffect(() => {
+    if (focused && followLatest.current && messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
+    }
+  }, [focused, messages.length])
   if (!messages.length) return null
   const terminal = stage === 'review' || stage === 'completed'
   const isInvestigate = stage === 'investigate'
@@ -18,18 +25,21 @@ export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDe
     {message.provider_status === 'unavailable' && <p className="provider-failure">AI provider unavailable. Any local guidance is labelled development support.</p>}
   </div>
 
-  const conversation = <section className="card chat-section" aria-label="Saved conversation">
+  const conversation = <section className={`card chat-section${focused ? ' focused-chat' : ''}`} aria-label={focused ? 'Tutor conversation' : 'Saved conversation'}>
     <div className="chat-header-row">
-      <h2 className="chat-title">{stage === 'investigate' || terminal ? 'Tutoring and clarification conversation' : 'Scenario clarifications'}</h2>
-      {isInvestigate && <span className="chat-hint-note">Discussing your reasoning with the tutor</span>}
+      <h2 className="chat-title">{focused ? 'Chat with your tutor' : stage === 'investigate' || terminal ? 'Tutoring and clarification conversation' : 'Scenario clarifications'}</h2>
+      {isInvestigate && <span className="chat-hint-note">{focused ? 'Reply to the question below. Ask for a hint whenever you need one.' : 'Discussing your reasoning with the tutor'}</span>}
     </div>
-    {diagnosticMessages.length > 0 && <details className="diagnostic-history-panel mb-3" open={open}>
+    {!focused && diagnosticMessages.length > 0 && <details className="diagnostic-history-panel mb-3" open={open}>
       <summary className="diagnostic-history-summary">Earlier diagnostic submissions ({diagnosticMessages.length})</summary>
       <div className="chat-messages diagnostic-history-list mt-2">
         {diagnosticMessages.map(renderMessage)}
       </div>
     </details>}
-    <div className="chat-messages" aria-live={terminal ? 'off' : 'polite'}>
+    <div ref={messagesRef} className="chat-messages" tabIndex={focused ? 0 : undefined} aria-label={focused ? 'Tutoring messages' : undefined} aria-live={terminal ? 'off' : 'polite'} onScroll={event => {
+      const node = event.currentTarget
+      followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64
+    }}>
       {activeMessages.map(renderMessage)}
     </div>
   </section>
