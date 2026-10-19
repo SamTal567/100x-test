@@ -12,8 +12,10 @@ import type {
   AuthResponse,
   AuthStatus,
 } from '../types'
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const BASE_URL =
+  typeof window !== 'undefined' && window.location.hostname.endsWith('vercel.app')
+    ? ''
+    : (import.meta.env.VITE_API_BASE_URL || '')
 
 export class ApiError extends Error {
   readonly status: number
