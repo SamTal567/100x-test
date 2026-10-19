@@ -13,6 +13,8 @@ from app.routers.review import attachments_router, review_router
 from app.schemas import HealthResponse
 from app.seed_data.seeding import seed_authored_data
 from app.resources import router as resources_router
+from app.routers.auth import router as auth_router
+
 
 settings = get_settings()
 
@@ -48,6 +50,8 @@ app.include_router(sessions_router)
 app.include_router(attachments_router)
 app.include_router(review_router)
 app.include_router(resources_router)
+app.include_router(auth_router)
+
 
 
 @app.get("/health", response_model=HealthResponse)

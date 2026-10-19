@@ -1472,6 +1472,132 @@ details[open] .summary-chevron {
   margin-bottom: 4px;
 }
 
+/* Personal Summary & Concern Cards */
+.report-personal-summary {
+  padding: var(--space-4);
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
+}
+
+.personal-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.personal-summary-card {
+  background: var(--bg-surface);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.concern-cards-list,
+.concern-cards-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.concern-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-left: 4px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+}
+
+.concern-card-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.concern-card-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.concern-case-name {
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.concern-question-part {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.concern-card-badges {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.concern-field {
+  margin-top: var(--space-2);
+  font-size: 0.88rem;
+}
+
+.concern-field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.concern-quote-box blockquote,
+.concern-quote {
+  font-style: italic;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--border-input);
+  padding-left: var(--space-3);
+  margin: var(--space-1) 0;
+}
+
+.badge-part {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border: 1px solid var(--border-input);
+}
+
+.badge-coverage {
+  background: var(--bg-surface-alt);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+}
+
+.criterion-demonstrated-text {
+  font-size: 0.82rem;
+  color: var(--color-success);
+  margin-top: 2px;
+}
+
+.criterion-explanation-text {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.criterion-next-action-text {
+  font-size: 0.82rem;
+  color: var(--color-primary);
+  margin-top: 2px;
+}
+
 .report-evidence-section {
   margin-bottom: var(--space-6);
   page-break-inside: avoid;
@@ -2288,6 +2414,201 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   AUTHENTICATION STYLES (Header badge & Auth Modal)
+   ═══════════════════════════════════════════════════════════════ */
+
+.user-profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+}
+
+.user-avatar-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+.user-name-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-auth-logout {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease;
+}
+
+.btn-auth-logout:hover {
+  color: var(--color-error);
+  text-decoration: underline;
+}
+
+.btn-auth-trigger {
+  font-size: 0.82rem;
+}
+
+/* Auth Dialog Modal */
+.auth-modal-dialog {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-hard);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  max-width: 440px;
+  width: 90%;
+  padding: var(--space-6);
+  margin: auto;
+}
+
+.auth-modal-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.auth-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.auth-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.auth-modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.auth-modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.auth-modal-close-btn:hover {
+  color: var(--text-primary);
+}
+
+.auth-modal-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.auth-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  background: var(--bg-surface-alt);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  margin: var(--space-1) 0;
+}
+
+.auth-tab-btn {
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.auth-tab-btn.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.auth-error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: #FFEBEE;
+  border: 1px solid #FFCDD2;
+  border-radius: var(--radius-sm);
+  color: #C62828;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+[data-theme="dark"] .auth-error-banner {
+  background: #2C1014;
+  border-color: #5C1D24;
+  color: #EF9A9A;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auth-field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.auth-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.auth-submit-btn {
+  flex: 1;
+}
+
+.auth-cancel-btn {
+  padding: 8px 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    PRINT STYLES
    ═══════════════════════════════════════════════════════════════ */
 
@@ -2297,6 +2618,9 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   .app-footer,
   .btn,
   .theme-toggle-btn,
+  .user-profile-badge,
+  .btn-auth-trigger,
+  .auth-modal-dialog,
   .report-action-footer,
   .drawer-backdrop,
   .earlier-answers-summary,
@@ -2306,21 +2630,35 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   .report-actions-group,
   .skip-revision-details,
   .quiet-finish-panel,
-  .help-controls-bar {
+  .help-controls-bar,
+
+  .no-print {
     display: none !important;
   }
 
+  html,
   body {
     background: #FFFFFF !important;
     color: #000000 !important;
     font-size: 10.5pt;
     line-height: 1.4;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
   }
 
-  .app-main {
+  .app-layout,
+  .app-main,
+  .session-container,
+  .report-container,
+  .report-card {
     max-width: 100% !important;
-    padding: 0 !important;
     margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
   }
 
   /* Compact summary mode hides the detailed evidence appendix and saved conversation */
@@ -2364,8 +2702,6 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
     background: #FFFFFF !important;
     page-break-inside: auto !important;
     break-inside: auto !important;
-    margin: 0 !important;
-    padding: 0 !important;
   }
 
   .card:not(.report-card) {
@@ -2383,15 +2719,15 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
     break-inside: auto !important;
   }
 
-  .summary-grid-cards {
+  .summary-grid-cards,
+  .personal-summary-grid {
     display: grid !important;
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 8pt !important;
   }
 
-  .summary-point-card {
-    break-inside: avoid;
-    page-break-inside: avoid;
+  .summary-point-card,
+  .personal-summary-card {
     padding: 6pt 8pt !important;
     border: 1px solid #D0D0D0 !important;
     background: #FAFAFA !important;
@@ -2407,30 +2743,51 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   }
 
   .chat-message {
-    break-inside: avoid;
-    page-break-inside: avoid;
     margin-bottom: 6pt !important;
   }
 
-  .gap-finding-card {
-    break-inside: avoid;
-    page-break-inside: avoid;
+  .concern-card {
+    padding: 8pt !important;
+    border: 1px solid #D0D0D0 !important;
+    border-left: 3pt solid #C05600 !important;
+    background: #FAFAFA !important;
+    margin-bottom: 8pt !important;
+  }
+
+  .concern-quote {
+    border-left: 2pt solid #888888 !important;
+    padding-left: 6pt !important;
   }
 
   .attempt-card {
     box-shadow: none !important;
     border: 1px solid #D0D0D0 !important;
     background: #FFFFFF !important;
-    page-break-inside: avoid;
-    break-inside: avoid;
     margin-bottom: 10pt !important;
     padding: 8pt !important;
   }
 
-  h1, h2, h3, h4 {
-    page-break-after: avoid;
-    break-after: avoid;
+  /* Orphaned headings and section labels */
+  h1, h2, h3, h4, h5, h6, summary, .detail-accordion-title, .section-subtitle {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
     color: #000000 !important;
+  }
+
+  /* Avoid page breaks inside discrete content cards and rows */
+  .criterion-card-row,
+  .concern-card,
+  .summary-point-card,
+  .personal-summary-card,
+  .gap-finding-card,
+  .skill-comparison-card,
+  .comparison-card,
+  .attempt-card,
+  .chat-message,
+  tr,
+  .evidence-row {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
   .report-header-banner {
@@ -2449,9 +2806,16 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
     border-bottom: 1px solid #CCCCCC !important;
   }
 
-  /* Avoid page breaks inside table rows and skill comparison cards */
-  tr, .skill-comparison-card, .evidence-row {
-    page-break-inside: avoid;
-    break-inside: avoid;
+  /* Prevent trailing margins/paddings from generating extra blank pages */
+  .report-card > *:last-child,
+  .report-evidence-section:last-child,
+  .report-detail-accordion:last-child,
+  .attempts-stack > *:last-child,
+  .summary-grid-cards > *:last-child,
+  .personal-summary-grid > *:last-child,
+  .concern-cards-list > *:last-child,
+  .concern-cards-stack > *:last-child {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
   }
 }

@@ -195,6 +195,24 @@ export interface GapReport {
   addressed_stage?: string | null
 }
 
+export interface CriterionDetail {
+  criterion: string
+  skill_id?: string
+  rating?: string
+  met?: boolean | null
+  evidence?: string
+  reviewer_notes?: string
+  status?: 'provisional' | 'reviewed' | 'corrected' | string
+  unprompted?: boolean | null
+  unprompted_note?: string | null
+  question_part_id?: string
+  coverage?: 'answered' | 'partly_answered' | 'unanswered' | 'unclear'
+  issue_type?: 'incorrect_claim' | 'missing_requested_part' | 'ambiguous_wording_or_interpretation' | 'insufficient_evidence' | 'technical_failure'
+  demonstrated_explanation?: string
+  explanation?: string
+  next_action?: string
+}
+
 export interface CriterionAssessment {
   criterion: string
   skill_id?: string
@@ -205,6 +223,12 @@ export interface CriterionAssessment {
   status: 'provisional' | 'reviewed' | 'corrected'
   unprompted?: boolean | null
   unprompted_note?: string | null
+  question_part_id?: string
+  coverage?: 'answered' | 'partly_answered' | 'unanswered' | 'unclear'
+  issue_type?: 'incorrect_claim' | 'missing_requested_part' | 'ambiguous_wording_or_interpretation' | 'insufficient_evidence' | 'technical_failure'
+  demonstrated_explanation?: string
+  explanation?: string
+  next_action?: string
 }
 
 export interface AttemptReport {
@@ -253,6 +277,35 @@ export interface SkillComparison {
   review_status: string
 }
 
+export interface PersonalSummary {
+  demonstrated: string
+  missing_or_incorrect: string
+  changed_after_help: string
+  needs_independent_checking: string
+  recommended_next_step: string
+}
+
+export interface ConcernCard {
+  case_name: string
+  question_part: string
+  learner_quote?: string | null
+  what_was_correct?: string
+  why_rating: string
+  how_to_improve?: string
+  suggested_next_step?: string
+  issue_type?: string
+  rating?: string
+}
+
+export interface SessionSummary {
+  personal_summary?: PersonalSummary
+  concern_cards?: ConcernCard[]
+  unfamiliar_case_summary?: string
+  revised_reasoning_summary?: string
+  unresolved_summary?: string
+  support_summary?: string
+}
+
 export interface SessionReport {
   session_id: string
   concept_title: string
@@ -265,12 +318,7 @@ export interface SessionReport {
   previous_sessions?: { session_id: string; created_at: string; outcome: string; skill_comparisons: SkillComparison[] }[]
   assessment_status: 'provisional' | 'reviewed'
   outcome_reason: string
-  session_summary?: {
-    unfamiliar_case_summary: string
-    revised_reasoning_summary: string
-    unresolved_summary: string
-    support_summary: string
-  }
+  session_summary?: SessionSummary
   initial_score?: number | null
   final_score?: number | null
   score_change?: number | null
@@ -342,4 +390,22 @@ export interface HealthResponse {
   status: string
   openai_available: boolean
   fish_audio_available: boolean
+}
+
+export interface User {
+  id: string
+  email: string
+  full_name?: string | null
+  created_at: string
+}
+
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user: User
+}
+
+export interface AuthStatus {
+  authenticated: boolean
+  user: User | null
 }

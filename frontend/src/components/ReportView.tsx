@@ -24,28 +24,46 @@ export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }>
       <div className="criterion-statement-line">
         <strong>{criterion.criterion}</strong>
         <div className="criterion-badges-wrap">
+          {criterion.question_part_id && <span className="badge badge-part">Part: {criterion.question_part_id}</span>}
+          {criterion.coverage && <span className="badge badge-coverage">{criterion.coverage.replaceAll('_', ' ')}</span>}
+          {criterion.issue_type && <span className="badge badge-warning">{criterion.issue_type.replaceAll('_', ' ')}</span>}
           {criterion.unprompted && <span className="badge badge-unprompted" title={criterion.unprompted_note || 'Not explicitly requested in scenario prompt'}>⚠️ Not asked in prompt</span>}
           <span className={`badge ${criterion.status === 'provisional' ? 'badge-provisional' : 'badge-reviewed'}`}>{criterion.skill_id?.startsWith('exercise:') ? 'Prepared selection check' : criterion.status === 'provisional' ? 'Provisional AI judgment' : criterion.status === 'corrected' ? 'Human corrected' : 'Human reviewed'}</span>
         </div>
       </div>
       <p>{criterion.rating?.replaceAll('_', ' ') || 'Rating not recorded'}</p>
       {criterion.unprompted && criterion.unprompted_note && <p className="muted-note text-warning">{criterion.unprompted_note}</p>}
+      {criterion.demonstrated_explanation && <p className="criterion-demonstrated-text"><strong>Demonstrated:</strong> {criterion.demonstrated_explanation}</p>}
+      {criterion.explanation && <p className="criterion-explanation-text"><strong>Explanation:</strong> {criterion.explanation}</p>}
+      {criterion.next_action && <p className="criterion-next-action-text"><strong>Next action:</strong> {criterion.next_action}</p>}
       {criterion.evidence && <p className="criterion-evidence-text">Evidence: {criterion.evidence}</p>}
       {criterion.reviewer_notes && <p className="criterion-reviewer-note">Reviewer: {criterion.reviewer_notes}</p>}
     </div>
   </div>)}</div>
 </div>
 
-const EvidenceList: React.FC<{ items: SkillEvidence[] }> = ({ items }) => items.length ? <ul className="comparison-evidence">{items.map((item, index) => <li key={`${item.attempt_id}-${index}`}>
+const STAGE_EMPTY_REASONS: Record<string, string> = {
+  Baseline: 'Not asked in this case',
+  'Revision with support': 'Not attempted (revision skipped)',
+  'Fresh case': 'Not rechecked in fresh case',
+}
+
+const EvidenceList: React.FC<{ items: SkillEvidence[]; emptyReason?: string }> = ({ items, emptyReason = 'Not attempted' }) => items.length ? <ul className="comparison-evidence">{items.map((item, index) => <li key={`${item.attempt_id}-${index}`}>
   <a href={`#attempt-${item.attempt_id}`}>{item.criterion}</a><br />
   <strong>{item.rating?.replaceAll('_', ' ') || (item.met === true ? 'Demonstrated' : item.met === false ? 'Needs attention' : 'Uncertain')}</strong> · {supportLabel(item.support_level)}
   {item.evidence && <p>{item.evidence}</p>}
-</li>)}</ul> : <p className="muted-note">No evidence recorded.</p>
+</li>)}</ul> : <p className="muted-note">{emptyReason}</p>
 
 export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; historical?: boolean }> = ({ comparisons, historical = false }) => <div className="skill-comparisons">
   {comparisons.map(comparison => <section key={comparison.skill_id} className="card-flat comparison-card">
     <h4>{comparison.label}</h4><p className="muted-note">{comparison.review_status === 'reviewed' ? 'Human reviewed' : 'Provisional comparison — human review needed'}</p>
-    <div className="comparison-columns">{([['Baseline', comparison.baseline], ['Revision with support', comparison.revision], ['Fresh case', comparison.transfer]] as const).map(([label, evidence]) => <div key={label}><h5>{label}</h5>{historical ? evidence.length ? <ul className="comparison-evidence">{evidence.map((item, index) => <li key={index}><strong>{item.rating?.replaceAll('_', ' ') || 'Uncertain'}</strong> · {supportLabel(item.support_level)}<p>{item.evidence || item.criterion}</p></li>)}</ul> : <p className="muted-note">No evidence recorded.</p> : <EvidenceList items={evidence} />}</div>)}</div>
+    <div className="comparison-columns">{([['Baseline', comparison.baseline], ['Revision with support', comparison.revision], ['Fresh case', comparison.transfer]] as const).map(([label, evidence]) => {
+      const reason = STAGE_EMPTY_REASONS[label] || 'Not attempted'
+      return <div key={label}>
+        <h5>{label}</h5>
+        {historical ? evidence.length ? <ul className="comparison-evidence">{evidence.map((item, index) => <li key={index}><strong>{item.rating?.replaceAll('_', ' ') || 'Uncertain'}</strong> · {supportLabel(item.support_level)}<p>{item.evidence || item.criterion}</p></li>)}</ul> : <p className="muted-note">{reason}</p> : <EvidenceList items={evidence} emptyReason={reason} />}
+      </div>
+    })}</div>
     <p>{comparison.change_summary}</p>
   </section>)}
 </div>
@@ -72,42 +90,93 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
       <p className="report-outcome-reason">{report.outcome_reason}</p>
     </div>
 
-    {/* Section A Key Findings Grid */}
-    {summary && <section className="report-summary-grid card-flat mb-4" aria-label="Session summary findings">
-      <h3 className="section-subtitle">Session overview</h3>
-      <div className="summary-grid-cards">
-        <div className="summary-point-card">
-          <span className="summary-point-label">Unfamiliar case</span>
-          <p>{summary.unfamiliar_case_summary}</p>
+    {/* 1. 5-Point Personal Summary (Prominently First) */}
+    {summary?.personal_summary && <section className="report-personal-summary card-flat mb-4" aria-label="Personal summary">
+      <h3 className="section-subtitle">Personal summary</h3>
+      <div className="personal-summary-grid">
+        <div className="summary-point-card personal-summary-card">
+          <span className="summary-point-label">What you demonstrated</span>
+          <p>{summary.personal_summary.demonstrated}</p>
         </div>
-        <div className="summary-point-card">
-          <span className="summary-point-label">Revised reasoning</span>
-          <p>{summary.revised_reasoning_summary}</p>
+        <div className="summary-point-card personal-summary-card">
+          <span className="summary-point-label">Missing or incorrect</span>
+          <p>{summary.personal_summary.missing_or_incorrect}</p>
         </div>
-        <div className="summary-point-card">
-          <span className="summary-point-label">Unresolved / unassessed</span>
-          <p>{summary.unresolved_summary}</p>
+        <div className="summary-point-card personal-summary-card">
+          <span className="summary-point-label">Changed after help</span>
+          <p>{summary.personal_summary.changed_after_help}</p>
         </div>
-        <div className="summary-point-card">
-          <span className="summary-point-label">Support used</span>
-          <p>{summary.support_summary}</p>
+        <div className="summary-point-card personal-summary-card">
+          <span className="summary-point-label">Needs independent checking</span>
+          <p>{summary.personal_summary.needs_independent_checking}</p>
+        </div>
+        <div className="summary-point-card personal-summary-card">
+          <span className="summary-point-label">Recommended next step</span>
+          <p>{summary.personal_summary.recommended_next_step}</p>
         </div>
       </div>
     </section>}
 
-    {/* Stage Progress Counts */}
-    {Boolean(report.stage_summaries?.length) && <section className="report-evidence-section mb-4" aria-label="Separate assessment stages">
-      <div className="comparison-columns">{report.stage_summaries!.map(s => <div className="card-flat" key={s.stage}>
-        <h3>{{ baseline: 'Baseline evidence', revision: 'Revision after support', transfer: 'Unfamiliar case evidence' }[s.stage]}</h3>
-        {s.status === 'not_assessed' ? <p>Not assessed</p> : <>
-          <p><strong>{s.met_count}/{s.total_count} criteria demonstrated</strong>{s.percentage != null ? ` (${s.percentage}% of these criteria)` : ''}</p>
-          {s.status === 'partial' && <p className="muted-note">Assessment incomplete; no percentage is assigned.</p>}
-          {s.uncertain_count > 0 && <p>{s.uncertain_count} need clarification.</p>}
-          {s.unavailable_count > 0 && <p>{s.unavailable_count} could not be assessed.</p>}
-          <p className="muted-note">{s.support_levels.map(supportLabel).join(' · ')}</p>
-        </>}
-      </div>)}</div>
-      <p className="muted-note">Counts describe separate cases, which can cover different skills and difficulty. Use the matched skill evidence below to compare reasoning.</p>
+    {/* 2. Session Overview (Unfamiliar case, Revised reasoning, etc.) */}
+    {summary && (summary.unfamiliar_case_summary || summary.revised_reasoning_summary || summary.unresolved_summary || summary.support_summary) && <section className="report-summary-grid card-flat mb-4" aria-label="Session summary findings">
+      <h3 className="section-subtitle">Session overview</h3>
+      <div className="summary-grid-cards">
+        {summary.unfamiliar_case_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Unfamiliar case</span>
+          <p>{summary.unfamiliar_case_summary}</p>
+        </div>}
+        {summary.revised_reasoning_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Revised reasoning</span>
+          <p>{summary.revised_reasoning_summary}</p>
+        </div>}
+        {summary.unresolved_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Unresolved / unassessed</span>
+          <p>{summary.unresolved_summary}</p>
+        </div>}
+        {summary.support_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Support used</span>
+          <p>{summary.support_summary}</p>
+        </div>}
+      </div>
+    </section>}
+
+    {/* 3. Concern Cards */}
+    {Boolean(summary?.concern_cards?.length) && <section className="report-concern-cards card-flat mb-4" aria-label="Specific areas of concern">
+      <h3 className="section-subtitle">Specific areas of concern</h3>
+      <div className="concern-cards-list">
+        {summary!.concern_cards!.map((card, index) => <div key={`${card.case_name}-${card.question_part}-${index}`} className="concern-card card-flat mb-3">
+          <div className="concern-card-topbar">
+            <div className="concern-card-title-group">
+              <strong className="concern-case-name">{card.case_name}</strong>
+              {card.question_part && <span className="concern-question-part">Part: {card.question_part}</span>}
+            </div>
+            <div className="concern-card-badges">
+              {card.issue_type && <span className="badge badge-warning">{card.issue_type.replaceAll('_', ' ')}</span>}
+              {card.rating && <span className="badge badge-provisional">{card.rating.replaceAll('_', ' ')}</span>}
+            </div>
+          </div>
+          {card.learner_quote && card.learner_quote.trim() && <div className="concern-field concern-quote-box">
+            <span className="concern-field-label">Your quote:</span>
+            <blockquote className="concern-quote">{card.learner_quote}</blockquote>
+          </div>}
+          {card.what_was_correct && <div className="concern-field">
+            <span className="concern-field-label">What was correct:</span>
+            <p>{card.what_was_correct}</p>
+          </div>}
+          <div className="concern-field">
+            <span className="concern-field-label">Why this rating:</span>
+            <p>{card.why_rating}</p>
+          </div>
+          {card.how_to_improve && <div className="concern-field">
+            <span className="concern-field-label">How to improve:</span>
+            <p>{card.how_to_improve}</p>
+          </div>}
+          {card.suggested_next_step && <div className="concern-field">
+            <span className="concern-field-label">Suggested next step:</span>
+            <p>{card.suggested_next_step}</p>
+          </div>}
+        </div>)}
+      </div>
     </section>}
 
     <p className="report-disclaimer-box">Evidence reflects the cases attempted and the support received. A short session does not establish complete mastery or prove that tutoring caused a change. Authored cases remain unreviewed until a person reviews them.</p>
@@ -128,6 +197,27 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
     <section className="report-evidence-section print-appendix print-hide-in-summary">
       <h3>Detailed evidence & appendix</h3>
       <p className="muted-note no-print">Review original prompts, submitted reasoning, detailed criteria, and recorded support below.</p>
+
+      {/* Stage Progress Breakdown (Moved from Primary View to Appendix) */}
+      {Boolean(report.stage_summaries?.length) && <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>
+        <summary className="detail-accordion-title">Stage criterion breakdown (separate cases)</summary>
+        <div className="mt-3">
+          <p className="report-disclaimer-box" role="note">
+            Stage percentages describe separate non-comparable tasks and do not measure learning <span>grow</span>th or mastery.
+          </p>
+          <div className="comparison-columns mt-2">{report.stage_summaries!.map(s => <div className="card-flat" key={s.stage}>
+            <h4>{{ baseline: 'Baseline evidence', revision: 'Revision after support', transfer: 'Unfamiliar case evidence' }[s.stage]}</h4>
+            {s.status === 'not_assessed' ? <p>Not assessed</p> : <>
+              <p><strong>{s.met_count}/{s.total_count} criteria demonstrated</strong>{s.percentage != null ? ` (${s.percentage}% of these criteria)` : ''}</p>
+              {s.status === 'partial' && <p className="muted-note">Assessment incomplete; no percentage is assigned.</p>}
+              {s.uncertain_count > 0 && <p>{s.uncertain_count} need clarification.</p>}
+              {s.unavailable_count > 0 && <p>{s.unavailable_count} could not be assessed.</p>}
+              <p className="muted-note">{s.support_levels.map(supportLabel).join(' · ')}</p>
+            </>}
+          </div>)}</div>
+          <p className="muted-note mt-2">Counts describe separate cases, which can cover different skills and difficulty. Use the matched skill evidence above to compare reasoning.</p>
+        </div>
+      </details>}
 
       {/* 1. Preserved Scenarios & Answers */}
       <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>

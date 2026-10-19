@@ -308,18 +308,47 @@ class SessionService:
         snapshot = attempt.case_snapshot or snapshot_case(case or attempt.case_prompt)
         prepared, answer = snapshot.get("rubric", {}), assessment_answer(attempt)
         self.db.commit()  # No write transaction while awaiting the provider.
-        result = await self.ai.assess_attempt(scenario=snapshot["scenario_text"], answer=answer,
-            reference_answer=prepared.get("reference_answer", ""), criteria=prepared.get("criteria", []))
+        result = await self.ai.assess_attempt(
+            scenario=snapshot["scenario_text"],
+            answer=answer,
+            reference_answer=prepared.get("reference_answer", ""),
+            criteria=prepared.get("criteria", []),
+            question_parts=snapshot.get("question_parts"),
+        )
+        attempt.question_parts_coverage = [
+            p.model_dump() if hasattr(p, "model_dump") else p
+            for p in result.question_parts_coverage
+        ] if getattr(result, "question_parts_coverage", None) else None
         reviewed = {c.criterion for c in attempt.criterion_assessments if c.status in ("reviewed", "corrected")}
         self.db.query(CriterionAssessment).filter_by(attempt_id=attempt.id, status="provisional").delete(synchronize_session=False)
         for criterion in prepared.get("criteria", []):
             if criterion["criterion"] in reviewed:
                 continue
             matches = [c for c in result.criteria if c.criterion == criterion["criterion"]]
-            met, rating, evidence = normalized_proposal(matches[0] if len(matches) == 1 else None,
-                answer, result.status, result.summary)
-            self.db.add(CriterionAssessment(attempt_id=attempt.id, criterion=criterion["criterion"],
-                skill_id=criterion.get("skill_id"), met=met, rating=rating, evidence=evidence, status="provisional"))
+            proposal = normalized_proposal(
+                matches[0] if len(matches) == 1 else None,
+                answer,
+                result.status,
+                result.summary,
+                question_parts=snapshot.get("question_parts"),
+                criterion_id=criterion.get("criterion"),
+            )
+            met, rating, evidence = proposal
+            self.db.add(CriterionAssessment(
+                attempt_id=attempt.id,
+                criterion=criterion["criterion"],
+                skill_id=criterion.get("skill_id"),
+                met=met,
+                rating=rating,
+                evidence=evidence,
+                status="provisional",
+                question_part_id=proposal.question_part_id,
+                coverage=proposal.coverage,
+                issue_type=proposal.issue_type,
+                demonstrated_explanation=proposal.demonstrated_explanation,
+                explanation=proposal.explanation,
+                next_action=proposal.next_action,
+            ))
         for objective in exercise_results(snapshot, attempt.diagram_state, attempt.cloze_state):
             if objective["criterion"] in reviewed:
                 continue
@@ -334,6 +363,13 @@ class SessionService:
         for attempt in attempts:
             snapshot = attempt.case_snapshot or snapshot_case(attempt.case_prompt)
             prepared = snapshot["rubric"]
+            case_name = (
+                snapshot.get("title")
+                or (snapshot.get("diagram_preset") or {}).get("title")
+                or (snapshot.get("cloze_preset") or {}).get("title")
+                or (snapshot.get("scenario_text", "").strip().split("\n")[0][:60].strip())
+                or "the scenario"
+            )
             if not attempt.criterion_assessments:
                 await self._assess_attempt(attempt)
             self.db.commit()
@@ -344,7 +380,7 @@ class SessionService:
             if (analysis.status == "complete" and analysis.gap_found and quote.strip()
                 and quote.casefold() in attempt.answer_text.casefold() and not self._gap(session)):
                 self.db.add(Gap(session_id=session.id, source_attempt_id=attempt.id, description=analysis.description,
-                    evidence_quote=quote, probe_text=analysis.probe_question or "Which stated facts support your explanation, and what would break if your assumption changed?", status="identified"))
+                    evidence_quote=quote, probe_text=analysis.probe_question or f"In {case_name}: Which stated facts support your explanation, and what would break if your assumption changed?", status="identified"))
                 self.db.flush()
             if not self._gap(session):
                 uncertain = next((c for c in attempt.criterion_assessments
@@ -353,8 +389,22 @@ class SessionService:
                 if uncertain:
                     criterion = next((c for c in prepared.get("criteria", []) if c["criterion"] == uncertain.criterion), {})
                     probes = criterion.get("follow_up_probes") or []
-                    probe = probes[0] if probes else f"Could you explain your reasoning about this part: {uncertain.criterion}? State any assumptions you used."
+                    if uncertain.issue_type == "missing_requested_part" or uncertain.rating == "not_addressed":
+                        exp = uncertain.explanation or f"You did not address {uncertain.criterion}."
+                        probe = f"In {case_name}: {exp} How would you answer this part?"
+                    elif uncertain.issue_type in ("ambiguous_wording_or_interpretation", "ambiguous_wording", "insufficient_evidence") or uncertain.rating == "ambiguous_needs_clarification":
+                        probe = f"In {case_name}: Your explanation about {uncertain.criterion} was ambiguous. What did you mean?"
+                    elif uncertain.issue_type == "incorrect_claim" or uncertain.rating == "partially_demonstrated":
+                        claim = uncertain.evidence or uncertain.criterion
+                        probe = f"In {case_name}: Could you explain the reasoning behind: '{claim}'? What happens if that assumption is tested?"
+                    elif probes:
+                        probe = probes[0]
+                    else:
+                        probe = f"In {case_name}: Could you explain your reasoning about this part: {uncertain.criterion}? State any assumptions you used."
+
                     evidence = uncertain.evidence if uncertain.evidence and uncertain.evidence.casefold() in attempt.answer_text.casefold() else None
+                    if uncertain.rating == "not_addressed" or uncertain.issue_type == "missing_requested_part":
+                        evidence = None
                     self.db.add(Gap(session_id=session.id, source_attempt_id=attempt.id,
                         description=f"Needs clarification: {uncertain.criterion}. This may be an omission or interpretation issue; no misconception is confirmed.",
                         evidence_quote=evidence, probe_text=probe, status="needs_clarification"))
@@ -459,19 +509,30 @@ class SessionService:
         concept = self.db.get(Concept, session.concept_id)
         lesson = LESSONS.get(concept.slug) if concept else None
         support = self.db.query(Intervention).filter_by(session_id=session.id).order_by(Intervention.created_at).all()
-        source_assessments = [{"criterion": c.criterion, "skill_id": c.skill_id, "rating": c.rating,
-            "met": c.met, "evidence": c.evidence, "status": c.status} for c in (original.criterion_assessments if original else [])]
+        source_assessments = [{
+            "criterion": c.criterion, "skill_id": c.skill_id, "rating": c.rating,
+            "met": c.met, "evidence": c.evidence, "status": c.status,
+            "question_part_id": getattr(c, "question_part_id", None),
+            "coverage": getattr(c, "coverage", None),
+            "issue_type": getattr(c, "issue_type", None),
+            "demonstrated_explanation": getattr(c, "demonstrated_explanation", None),
+            "explanation": getattr(c, "explanation", None),
+            "next_action": getattr(c, "next_action", None),
+        } for c in (original.criterion_assessments if original else [])]
         same_case = bool(original and original.case_prompt_id == case.id)
         teaching_context = {
             "version": "2026-10-19.1", "case_id": snapshot.get("id"), "case_version": snapshot.get("version"),
             "rubric_version": prepared.get("version"), "content_review_status": snapshot.get("review_status", "unreviewed"),
             "source_provenance": "frozen_attempt" if original and original.case_snapshot and original.case_prompt_id == case.id else "current_prepared_case",
             "reference_answer": prepared.get("reference_answer", ""), "criteria": prepared.get("criteria", []),
+            "question_parts": snapshot.get("question_parts"),
+            "question_parts_coverage": getattr(original, "question_parts_coverage", None),
             "assessment_attempt_id": original.id if same_case else None,
             "assessments": source_assessments if same_case else [],
             "source_attempt": {"attempt_id": original.id, "case_id": original.case_prompt_id,
                 "case_version": (original.case_snapshot or {}).get("version"),
-                "assessments": source_assessments} if original else None,
+                "assessments": source_assessments,
+                "question_parts_coverage": getattr(original, "question_parts_coverage", None)} if original else None,
             "lesson": {"version": RESOURCE_VERSION, "source": "AI-authored, unreviewed", **lesson} if lesson else None,
             "help_history": [{"type": item.intervention_type, "title": item.title, "status": item.status,
                 "content": (item.content or "")[-6000:], "opened": item.opened_at is not None,

@@ -9,6 +9,8 @@ import type {
   AssessmentReviewItem,
   HealthResponse,
   CaseReviewItem,
+  AuthResponse,
+  AuthStatus,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -19,11 +21,18 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('cc_auth_token') : null
+  const authHeaders: Record<string, string> = {}
+  if (token) {
+    authHeaders['Authorization'] = `Bearer ${token}`
+  }
+
   const res = await fetch(`${BASE_URL}${endpoint}`, {
     ...options,
     credentials: 'include',
     headers: {
       'Accept': 'application/json',
+      ...authHeaders,
       ...options.headers,
     },
   })
@@ -134,5 +143,40 @@ export const api = {
     return request<{ status: string }>(`/v1/review/cases/${caseId}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Reviewer-Key': reviewerKey }, body: JSON.stringify(data),
     })
+  },
+
+  async signup(data: { email: string; password: string; full_name?: string }): Promise<AuthResponse> {
+    const res = await request<AuthResponse>('/v1/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (res.access_token && typeof localStorage !== 'undefined') {
+      localStorage.setItem('cc_auth_token', res.access_token)
+    }
+    return res
+  },
+
+  async login(data: { email: string; password: string }): Promise<AuthResponse> {
+    const res = await request<AuthResponse>('/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (res.access_token && typeof localStorage !== 'undefined') {
+      localStorage.setItem('cc_auth_token', res.access_token)
+    }
+    return res
+  },
+
+  async logout(): Promise<{ status: string }> {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('cc_auth_token')
+    }
+    return request<{ status: string }>('/v1/auth/logout', { method: 'POST' })
+  },
+
+  async getMe(): Promise<AuthStatus> {
+    return request<AuthStatus>('/v1/auth/me')
   },
 }

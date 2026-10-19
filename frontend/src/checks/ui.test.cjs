@@ -1,4 +1,4 @@
-﻿const assert = require('node:assert/strict')
+const assert = require('node:assert/strict')
 const test = require('node:test')
 const fs = require('node:fs')
 const ts = require('typescript')
@@ -22,7 +22,9 @@ const { StageProgressBar } = require('../components/StageProgressBar.tsx')
 const { SessionTranscript } = require('../components/SessionTranscript.tsx')
 const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
 const { HelpMenu } = require('../components/HelpMenu.tsx')
+const { AuthModal } = require('../components/AuthModal.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
+
 
 test('confirmed dictation appends to typed text and keeps all accepted clip references after reload', () => {
   const { applyDictation } = require('../lib/dictation.ts')
@@ -658,4 +660,15 @@ test('regression: double-wrapping openTrackedResource reproduces double tabs and
     ['save', '/v1/resources/storage-persistence'],
     ['navigate', '/v1/resources/storage-persistence'],
   ])
+})
+
+test('auth modal renders sign in and registration forms with accessible tablist', () => {
+  const html = render(AuthModal, { isOpen: true, onClose: () => {}, onAuthSuccess: () => {} })
+  assert.match(html, /Sign In to Concept Check/)
+  assert.match(html, /role="tablist"/)
+  assert.match(html, /Sign In/)
+  assert.match(html, /Create Account/)
+  assert.match(html, /Email Address/)
+  assert.match(html, /Password/)
+  assert.match(html, /Sign In →/)
 })

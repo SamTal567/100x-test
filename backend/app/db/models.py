@@ -27,6 +27,19 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ── User Authentication ──────────────────────────────────────────
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 # ── Catalogue ────────────────────────────────────────────────────
 
 class Concept(Base):
@@ -68,6 +81,7 @@ class CasePrompt(Base):
     assumptions = Column(JSON, nullable=True)
     diagram_preset = Column(JSON, nullable=True)
     cloze_preset = Column(JSON, nullable=True)
+    question_parts = Column(JSON, nullable=True)
 
 
 class Rubric(Base):
@@ -147,6 +161,7 @@ class Attempt(Base):
     cloze_state = Column(JSON, nullable=True)
     skill_id = Column(String(50), nullable=True)
     case_snapshot = Column(JSON, nullable=True)
+    question_parts_coverage = Column(JSON, nullable=True)
     support_level = Column(String(50), default="independent", nullable=False)
     processing_status = Column(String(20), default="complete", nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
@@ -186,6 +201,12 @@ class CriterionAssessment(Base):
     met = Column(Boolean, nullable=True)  # None = unclear
     evidence = Column(Text, nullable=True)
     reviewer_notes = Column(Text, nullable=True)
+    question_part_id = Column(String(100), nullable=True)
+    coverage = Column(String(30), nullable=True)  # answered, partially_answered, unanswered, unclear
+    issue_type = Column(String(40), nullable=True)  # incorrect_claim, missing_requested_part, ambiguous_wording, insufficient_evidence, technical_failure
+    demonstrated_explanation = Column(Text, nullable=True)
+    explanation = Column(Text, nullable=True)
+    next_action = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     reviewed_at = Column(DateTime, nullable=True)
 

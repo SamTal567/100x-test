@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 
 
 AssessmentRating = Literal[
@@ -20,7 +20,10 @@ def sanitize_public_snapshot(value):
             key: sanitize_public_snapshot(item)
             for key, item in value.items()
             if not (str(key).casefold().startswith(("correct", "private", "_"))
-                    or str(key).casefold() in {"answer_key", "reference_answer", "rubric", "criteria"})
+                    or str(key).casefold() in {
+                        "answer_key", "reference_answer", "rubric", "criteria",
+                        "assessment_guidance", "acceptable_alternatives",
+                    })
         }
     if isinstance(value, (list, tuple)):
         return [sanitize_public_snapshot(item) for item in value]
@@ -55,10 +58,11 @@ class CasePromptOut(BaseModel):
     assumptions: Optional[list[str]] = None
     diagram_preset: Optional[dict] = None
     cloze_preset: Optional[dict] = None
+    question_parts: Optional[list[dict]] = None
     version: int = 1
     review_status: str = "unreviewed"
 
-    @field_validator("diagram_preset", "cloze_preset", mode="before")
+    @field_validator("diagram_preset", "cloze_preset", "question_parts", mode="before")
     @classmethod
     def remove_private_exercise_keys(cls, value):
         return sanitize_public_snapshot(value)
@@ -175,6 +179,12 @@ class CriterionDetail(BaseModel):
     status: str = "provisional"
     unprompted: Optional[bool] = None
     unprompted_note: Optional[str] = None
+    question_part_id: Optional[str] = None
+    coverage: Optional[str] = None
+    issue_type: Optional[str] = None
+    demonstrated_explanation: Optional[str] = None
+    explanation: Optional[str] = None
+    next_action: Optional[str] = None
 
 
 class AttemptReport(BaseModel):
@@ -187,6 +197,8 @@ class AttemptReport(BaseModel):
     diagram_state: Optional[dict] = None
     cloze_state: Optional[dict] = None
     criteria: list[dict] = Field(default_factory=list)
+    question_parts: Optional[list[dict]] = None
+    question_parts_coverage: Optional[list[dict]] = None
     support_level: str = "independent"
     case_prompt_id: Optional[str] = None
     case_version: Optional[int] = None
@@ -203,7 +215,7 @@ class AttemptReport(BaseModel):
     uncertain_criteria_count: int = 0
     unavailable_criteria_count: int = 0
 
-    @field_validator("diagram_preset", "cloze_preset", mode="before")
+    @field_validator("diagram_preset", "cloze_preset", "question_parts", mode="before")
     @classmethod
     def remove_private_exercise_keys(cls, value):
         return sanitize_public_snapshot(value)
@@ -351,3 +363,36 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     openai_available: bool = False
     fish_audio_available: bool = False
+
+
+# ── User Authentication ──────────────────────────────────────────
+
+class UserRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    full_name: Optional[str] = Field(default=None, max_length=255)
+
+
+class UserLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    full_name: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
+class AuthStatus(BaseModel):
+    authenticated: bool
+    user: Optional[UserOut] = None

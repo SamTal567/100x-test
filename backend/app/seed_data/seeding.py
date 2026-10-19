@@ -17,7 +17,7 @@ from app.seed_data import CASE_BANKS, CONCEPTS, STORAGE_PERSISTENCE_CASES
 
 CASE_FIELDS = (
     "stage", "case_type", "scenario_text", "sort_order", "response_format",
-    "assumptions", "diagram_preset", "cloze_preset",
+    "assumptions", "diagram_preset", "cloze_preset", "question_parts",
 )
 
 # Exact introductory paragraphs from shipped seed files. Do not retire arbitrary
@@ -66,6 +66,8 @@ def _validate_bank(slug, cases):
     for case in cases:
         if not case["assumptions"] or not case["rubric"]["reference_answer"]:
             raise ValueError(f"Missing prepared assumptions or key for {slug}")
+        if not case.get("question_parts"):
+            raise ValueError(f"Missing question parts for {case.get('authored_id', slug)}")
 
 
 def seed_authored_data(db: Session, case_banks=None):

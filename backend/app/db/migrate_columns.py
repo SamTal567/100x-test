@@ -19,12 +19,14 @@ COLUMNS_TO_ENSURE = {
         ("assumptions", "JSON"),
         ("diagram_preset", "JSON"),
         ("cloze_preset", "JSON"),
+        ("question_parts", "JSON"),
     ],
     "attempts": [
         ("diagram_state", "JSON"),
         ("cloze_state", "JSON"),
         ("skill_id", "VARCHAR(50)"),
         ("case_snapshot", "JSON"),
+        ("question_parts_coverage", "JSON"),
         ("support_level", "VARCHAR(50) NOT NULL DEFAULT 'unknown'"),
         ("processing_status", "VARCHAR(20) NOT NULL DEFAULT 'complete'"),
     ],
@@ -44,6 +46,12 @@ COLUMNS_TO_ENSURE = {
     "criterion_assessments": [
         ("skill_id", "VARCHAR(50)"),
         ("rating", "VARCHAR(40) DEFAULT 'ambiguous_needs_clarification'"),
+        ("question_part_id", "VARCHAR(100)"),
+        ("coverage", "VARCHAR(30)"),
+        ("issue_type", "VARCHAR(40)"),
+        ("demonstrated_explanation", "TEXT"),
+        ("explanation", "TEXT"),
+        ("next_action", "TEXT"),
     ],
     "turn_idempotency": [
         ("request_body_hash", "VARCHAR(64)"),
@@ -51,7 +59,15 @@ COLUMNS_TO_ENSURE = {
         ("state", "VARCHAR(20) NOT NULL DEFAULT 'complete'"),
         ("attempt_id", "VARCHAR(36)"),
     ],
+    "users": [
+        ("email", "VARCHAR(255)"),
+        ("hashed_password", "VARCHAR(255)"),
+        ("full_name", "VARCHAR(255)"),
+        ("created_at", "TIMESTAMP"),
+        ("updated_at", "TIMESTAMP"),
+    ],
 }
+
 
 
 def ensure_schema_columns(engine: Engine) -> None:

@@ -67,6 +67,8 @@ CONCEPTS = [
     },
 ]
 
+from app.seed_data.module_banks import qpart
+
 STORAGE_PERSISTENCE_CASES = [
     # ── 1. Diagnostic Baseline Case #1 (Diagram Repair) ─────────────────────────
     {
@@ -111,6 +113,14 @@ STORAGE_PERSISTENCE_CASES = [
             "correct_repair": "opt_disk",
             "interaction_type": "repair",
         },
+        "question_parts": [
+            qpart("retrieval_reasoning", "Explain whether the note can be retrieved after restart and why process memory is cleared", ["memory_lifetime", "recovery_path"],
+                  assessment_guidance="Recognises that data in process memory/RAM is volatile and wiped when the process terminates; restarted process starts with empty memory.",
+                  acceptable_alternatives=["Note cannot be retrieved; RAM is cleared on process restart."]),
+            qpart("diagram_repair_persistent_path", "Repair the diagram to route the save path to persistent storage", ["memory_lifetime"],
+                  assessment_guidance="Select Database on Disk (Persistent) as the save target.",
+                  acceptable_alternatives=["opt_disk"]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -193,6 +203,14 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "interaction_type": "trace",
         },
+        "question_parts": [
+            qpart("explain_data_preservation", "Explain why the items survive the crash and are preserved on disk", ["memory_lifetime", "persistence_timing"],
+                  assessment_guidance="Items were flushed to a file on disk before the crash occurred, existing in non-volatile storage that survives crash.",
+                  acceptable_alternatives=["Flushed to disk before crash; disk survives process crash."]),
+            qpart("trace_startup_recovery", "Trace the path taken during startup recovery in the diagram", ["recovery_path"],
+                  assessment_guidance="Application startup loader reads the JSON file on disk to recover items into memory.",
+                  acceptable_alternatives=["Startup loader reads JSON file from disk."]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -244,6 +262,14 @@ STORAGE_PERSISTENCE_CASES = [
             "All 50 messages committed to PostgreSQL before crash",
             "PostgreSQL database survived intact",
             "Server boots with empty global variable",
+        ],
+        "question_parts": [
+            qpart("recovered_messages_source", "Explain which messages can be recovered and from where", ["memory_lifetime"],
+                  assessment_guidance="Global variable in RAM is wiped on crash; all 50 messages committed to PostgreSQL database are preserved on durable disk.",
+                  acceptable_alternatives=["Messages in PostgreSQL survive on disk; RAM variable is wiped."]),
+            qpart("startup_recovery_action", "Explain what the server must do on startup to repopulate state", ["recovery_path"],
+                  assessment_guidance="Startup routine must query PostgreSQL (SELECT messages) to rebuild the fast-access in-memory cache/variable.",
+                  acceptable_alternatives=["Query database on startup to repopulate global variable."]),
         ],
         "source": "ai-authored",
         "review_status": "unreviewed",
@@ -306,6 +332,14 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "justification_prompt": "Explain in your own words why the cart behaves this way and where carts should be stored instead.",
         },
+        "question_parts": [
+            qpart("cloze_cart_lifecycle", "Complete the cloze sentence on cart memory lifetime and process redeployment", ["memory_lifetime"],
+                  assessment_guidance="When carts live only in process memory, redeploying wipes active carts because process memory is volatile.",
+                  acceptable_alternatives=["process memory, wipes all active carts, volatile."]),
+            qpart("cart_vanish_justification", "Explain why shopping carts vanish during deployment and what durable storage would fix it", ["memory_lifetime", "persistence_timing"],
+                  assessment_guidance="Terminating process frees volatile RAM; new process boots empty; carts must be written to durable storage (database or Redis with configured persistence) before responding.",
+                  acceptable_alternatives=["RAM is wiped on process restart; commit to persistent database or configured durable cache."]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -377,6 +411,14 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "interaction_type": "completion",
         },
+        "question_parts": [
+            qpart("complete_queue_storage", "Complete the diagram by selecting the durable queue storage mechanism", ["recovery_path"],
+                  assessment_guidance="Select 'Durable Queue / Database on Disk' to replace the in-memory array.",
+                  acceptable_alternatives=["Durable Queue / Database on Disk"]),
+            qpart("memory_queue_failure", "Explain why an in-memory array fails when workers crash and how durable queue enables recovery", ["memory_lifetime", "recovery_path"],
+                  assessment_guidance="Array lives in worker process RAM and is destroyed on crash; durable queue persists jobs to disk so a restarted worker can reload and resume processing.",
+                  acceptable_alternatives=["Worker RAM is lost on crash; durable queue allows restarted worker to reload pending jobs."]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -442,6 +484,14 @@ STORAGE_PERSISTENCE_CASES = [
             "correct_repair": "opt_immediate",
             "interaction_type": "repair",
         },
+        "question_parts": [
+            qpart("explain_phone_loss", "Explain why the new phone number was lost during the power failure", ["persistence_timing", "recovery_path"],
+                  assessment_guidance="Update was acknowledged while only in volatile cache; power failure occurred in the window before the batch write to PostgreSQL, so data never reached disk.",
+                  acceptable_alternatives=["Data was only in volatile cache and delayed batch had not run before power cut."]),
+            qpart("repair_persistence_timing", "Repair the diagram to enforce safe persistence timing before responding", ["persistence_timing"],
+                  assessment_guidance="Select 'Commit to PostgreSQL before responding'.",
+                  acceptable_alternatives=["opt_immediate"]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -496,6 +546,14 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "justification_prompt": "Explain why timing of the disk flush determines whether incoming events survive.",
         },
+        "question_parts": [
+            qpart("cloze_buffer_flush", "Complete the cloze sentence for buffer flush timing", ["memory_lifetime", "persistence_timing"],
+                  assessment_guidance="Events in volatile memory buffer were permanently lost due to delayed persistence timing.",
+                  acceptable_alternatives=["volatile memory buffer, permanently lost, delayed persistence timing."]),
+            qpart("event_survival_justification", "Explain which events survive, which are lost, and why flush timing determines survival", ["memory_lifetime", "persistence_timing"],
+                  assessment_guidance="Events 0-45 in unwritten RAM buffer are lost on crash; earlier batches already flushed to disk survive because they crossed the persistence boundary.",
+                  acceptable_alternatives=["Unflushed events in RAM buffer are lost; previously flushed batches on disk survive."]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -543,6 +601,14 @@ STORAGE_PERSISTENCE_CASES = [
             "Match was in progress at minute 12",
             "Scores were kept only in server dictionary",
             "No database write was performed mid-match",
+        ],
+        "question_parts": [
+            qpart("score_fate_and_memory_lifetime", "Explain what happens to the scores from minutes 0 to 12 and why process memory causes loss", ["memory_lifetime"],
+                  assessment_guidance="Scores from minutes 0 to 12 are permanently lost because they existed only in the game server's volatile RAM dictionary, which is wiped on crash.",
+                  acceptable_alternatives=["Scores are lost because they only existed in volatile RAM."]),
+            qpart("persistence_timing_analysis", "Explain why the persistence timing policy left scores unsaved when the crash occurred", ["persistence_timing"],
+                  assessment_guidance="Scores were configured to be saved only when the match ends; because crash happened mid-match at minute 12, the database save was never executed.",
+                  acceptable_alternatives=["Database write only happens at match end, so mid-match crash occurred before any commit."]),
         ],
         "source": "ai-authored",
         "review_status": "unreviewed",
@@ -621,6 +687,14 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "interaction_type": "trace",
         },
+        "question_parts": [
+            qpart("price_seen_and_authoritative_source", "Explain whether the customer sees $1000 or $900 after restart and why", ["memory_lifetime"],
+                  assessment_guidance="Customer sees $900; stale $1000 cache was destroyed when process stopped, and restarted server queries authoritative PostgreSQL database on disk containing $900.",
+                  acceptable_alternatives=["Customer sees $900 because restart wiped the stale cache and server reads $900 from DB."]),
+            qpart("trace_recovery_path", "Trace the read flow and cache recovery path in the diagram", ["recovery_path"],
+                  assessment_guidance="Server queries authoritative database on disk ($900 from Database) and rebuilds cache.",
+                  acceptable_alternatives=["$900 from Database"]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -694,6 +768,14 @@ STORAGE_PERSISTENCE_CASES = [
             "correct_repair": "opt_client_reconnect",
             "interaction_type": "repair",
         },
+        "question_parts": [
+            qpart("explain_socket_vs_saved_state", "Explain why reading connected_users cannot work and why restoring saved data is different from live sockets", ["memory_lifetime"],
+                  assessment_guidance="Dictionary in RAM is gone on restart and open network socket handles are closed by OS; restarted server cannot revive live sockets, clients must reconnect.",
+                  acceptable_alternatives=["Sockets and RAM die on restart; restoring saved DB data does not restore live network connections."]),
+            qpart("repair_canvas_recovery", "Repair the diagram to retrieve saved canvas state from persistent storage", ["recovery_path"],
+                  assessment_guidance="Select 'Read committed canvas edits from DB'.",
+                  acceptable_alternatives=["opt_client_reconnect"]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -772,6 +854,17 @@ STORAGE_PERSISTENCE_CASES = [
             ],
             "interaction_type": "completion",
         },
+        "question_parts": [
+            qpart("readings_survival_analysis", "Explain which sensor readings survive and which are lost during the power cut", ["memory_lifetime"],
+                  assessment_guidance="Minute 0 readings in SQLite survive because they were committed to disk; minutes 1, 2, and 3 in volatile RAM buffer are lost when power was cut.",
+                  acceptable_alternatives=["Minute 0 committed readings survive on disk; minutes 1-3 in RAM buffer are lost."]),
+            qpart("complete_write_strategy", "Complete the diagram by identifying the write strategy that reduces the unsaved window", ["persistence_timing"],
+                  assessment_guidance="Select 'Commit each reading durably before acknowledging it'.",
+                  acceptable_alternatives=["Commit each reading durably before acknowledging it"]),
+            qpart("durability_guarantee_boundary", "State the boundary of any durability guarantee and the throughput trade-off", ["persistence_timing"],
+                  assessment_guidance="Acknowledged durable commits survive under intact storage assumption; readings arriving before commit completes may still be lost; policy trades throughput for durability.",
+                  acceptable_alternatives=["Durable commit before acknowledgement minimizes unsaved window, but in-flight readings can still be lost; trades throughput for durability."]),
+        ],
         "source": "ai-authored",
         "review_status": "unreviewed",
         "rubric": {
@@ -822,6 +915,17 @@ STORAGE_PERSISTENCE_CASES = [
             "All events were committed to disk log file before restart",
             "Disk log is uncorrupted",
             "In-memory circular buffer boots empty",
+        ],
+        "question_parts": [
+            qpart("dashboard_display_on_restart", "Describe what the dashboard displays immediately upon restart before new events arrive and why", ["memory_lifetime"],
+                  assessment_guidance="Dashboard displays an empty buffer because the circular buffer lived in process RAM, which was cleared on restart.",
+                  acceptable_alternatives=["Dashboard shows empty buffer because RAM was wiped on restart."]),
+            qpart("historical_logs_status", "Explain what happened to the historical logs", ["memory_lifetime"],
+                  assessment_guidance="Historical logs are safely preserved in the on-disk audit log file because disk writes completed before restart.",
+                  acceptable_alternatives=["Historical logs survived intact on disk."]),
+            qpart("restore_dashboard_history", "Explain how the dashboard can display the previous 500 lines", ["recovery_path"],
+                  assessment_guidance="Application startup routine must read the last 500 lines from the disk log file to repopulate the in-memory circular buffer.",
+                  acceptable_alternatives=["Read last 500 lines from disk file on startup to reload circular buffer."]),
         ],
         "source": "ai-authored",
         "review_status": "unreviewed",

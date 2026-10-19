@@ -3,9 +3,11 @@ import { CataloguePage } from './pages/CataloguePage'
 import { SessionPage } from './pages/SessionPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { ReviewerDrawer } from './components/ReviewerDrawer'
+import { AuthModal } from './components/AuthModal'
 import { api } from './api/client'
-import type { HealthResponse } from './types'
+import type { HealthResponse, User } from './types'
 import './index.css'
+
 
 export function App() {
   const [activeView, setActiveView] = useState<'catalogue' | 'session'>(() => localStorage.getItem('cc_active_session_id') && localStorage.getItem('cc_active_view') !== 'catalogue' ? 'session' : 'catalogue')
@@ -15,6 +17,8 @@ export function App() {
   const [reviewerOpen, setReviewerOpen] = useState(false)
   const [reviewRevision, setReviewRevision] = useState(0)
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
 
   useEffect(() => { localStorage.setItem('cc_active_view', activeView) }, [activeView])
 
@@ -28,7 +32,21 @@ export function App() {
 
   useEffect(() => {
     api.getHealth().then(setHealth).catch(() => null)
+    api.getMe().then(res => {
+      if (res.authenticated && res.user) {
+        setCurrentUser(res.user)
+      }
+    }).catch(() => null)
   }, [])
+
+  const handleLogout = async () => {
+    try {
+      await api.logout()
+    } finally {
+      setCurrentUser(null)
+    }
+  }
+
 
   const handleSelectConcept = async (conceptId: string) => {
     try {
@@ -108,10 +126,37 @@ export function App() {
               </span>
             </div>
 
+            {/* User Authentication state */}
+            {currentUser ? (
+              <div className="user-profile-badge" title={`Signed in as ${currentUser.email}`}>
+                <span className="user-avatar-initial" aria-hidden="true">
+                  {(currentUser.full_name || currentUser.email)[0].toUpperCase()}
+                </span>
+                <span className="user-name-label">{currentUser.full_name || currentUser.email}</span>
+                <button
+                  type="button"
+                  className="btn-auth-logout"
+                  onClick={handleLogout}
+                  title="Sign out of your account"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm btn-auth-trigger"
+                onClick={() => setAuthModalOpen(true)}
+              >
+                👤 Sign In
+              </button>
+            )}
+
             <ThemeToggle />
           </div>
         </div>
       </header>
+
 
       {/* Main Content Area — generous, unconstrained width */}
       <main className="app-main" id="main-content">
@@ -166,9 +211,19 @@ export function App() {
         onClose={() => setReviewerOpen(false)}
         onReviewSubmitted={() => setReviewRevision(value => value + 1)}
       />}
+
+      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthSuccess={(user) => {
+          setCurrentUser(user)
+        }}
+      />
     </div>
   )
 }
+
 
 export default App
 

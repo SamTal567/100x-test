@@ -43,6 +43,12 @@ def attempt_reports(db, session):
                 "criterion": c.criterion, "skill_id": c.skill_id, "rating": c.rating,
                 "met": c.met, "evidence": c.evidence, "status": c.status, "reviewer_notes": c.reviewer_notes,
                 "unprompted": is_unprompted, "unprompted_note": unprompted_note,
+                "question_part_id": getattr(c, "question_part_id", None),
+                "coverage": getattr(c, "coverage", None),
+                "issue_type": getattr(c, "issue_type", None),
+                "demonstrated_explanation": getattr(c, "demonstrated_explanation", None),
+                "explanation": getattr(c, "explanation", None),
+                "next_action": getattr(c, "next_action", None),
             })
         crit_list = [c for c in criteria if not (c.get("skill_id") or "").startswith("exercise:")]
         expected = {c["criterion"] for c in snapshot.get("rubric", {}).get("criteria", [])}
@@ -65,6 +71,8 @@ def attempt_reports(db, session):
             response_format=snapshot.get("response_format", "written"),
             diagram_preset=snapshot.get("diagram_preset"), cloze_preset=snapshot.get("cloze_preset"),
             diagram_state=attempt.diagram_state, cloze_state=attempt.cloze_state, criteria=criteria,
+            question_parts=snapshot.get("question_parts"),
+            question_parts_coverage=getattr(attempt, "question_parts_coverage", None),
             support_level=(attempt.support_level or "unknown") if has_snapshot else "unknown",
             processing_status=attempt.processing_status or "complete", created_at=attempt.created_at,
             gap_id=attempt.gap_id, score=attempt_score, met_criteria_count=met_count, total_criteria_count=total_count,
@@ -78,14 +86,25 @@ def skill_comparisons(reports):
         bucket = {"diagnostic": "baseline", "investigate": "revision", "apply": "transfer"}.get(attempt.stage)
         if not bucket:
             continue
+        case_title = (
+            (attempt.diagram_preset or {}).get("title")
+            or (attempt.cloze_preset or {}).get("title")
+            or (attempt.scenario_text.strip().split("\n")[0][:60].strip() if attempt.scenario_text else "")
+            or attempt.case_type.replace("_", " ").capitalize()
+        )
         for criterion in attempt.criteria:
             skill = criterion.get("skill_id") or criterion["criterion"]
             if skill.startswith("exercise:"):
                 continue
             item = skills.setdefault(skill, {"skill_id": skill, "label": skill.replace("_", " ").capitalize(),
                 "baseline": [], "revision": [], "transfer": [], "change_summary": "", "review_status": "provisional"})
-            item[bucket].append({"attempt_id": attempt.id, "case_type": attempt.case_type,
-                "support_level": attempt.support_level, **criterion})
+            item[bucket].append({
+                "attempt_id": attempt.id,
+                "case_type": attempt.case_type,
+                "support_level": attempt.support_level,
+                "source_case_title": case_title,
+                **criterion
+            })
     for item in skills.values():
         before, after = item["baseline"], item["transfer"]
         all_rows = before + item["revision"] + after
@@ -387,6 +406,13 @@ def build_report(db, session, include_history=True):
         support_used_labels_rev = sorted({a.support_level for a in revision_attempts})
         revised_summary = f"Revised answer demonstrated {rev_count} of {rev_total} criteria ({', '.join(support_used_labels_rev).replace('_', ' ')})."
 
+    journey_completed = (
+        session.stage in ("review", "completed")
+        and bool(expected_ids)
+        and set(expected_ids) == baseline_done
+        and any(a.stage == "apply" for a in attempts)
+    )
+
     unresolved_items = []
     if transfer_unmet:
         unresolved_items.append(f"{len(transfer_unmet)} criterion/criteria unmet on unfamiliar case")
@@ -397,6 +423,10 @@ def build_report(db, session, include_history=True):
     if transfer_missing:
         unresolved_items.append(f"{len(transfer_missing)} criterion assessment(s) missing from unfamiliar case")
 
+    has_technical_failure = any(c.get("rating") == "technical_failure" for c in all_rows)
+    if has_technical_failure and not any("technical failure" in item.lower() for item in unresolved_items):
+        unresolved_items.append("Assessment partially available due to technical failure")
+
     for b_skill in sorted(baseline_skills):
         if b_skill not in transfer_skills_all:
             label = b_skill.replace("_", " ").capitalize()
@@ -405,7 +435,10 @@ def build_report(db, session, include_history=True):
             else:
                 unresolved_items.append(f"Skill '{label}' not rechecked on unfamiliar case")
 
-    if not complete:
+    if concern_skills_not_rechecked:
+        unresolved_items.append("Skills partially covered: earlier skills not retested on unfamiliar case")
+
+    if not journey_completed:
         unresolved_items.append("Session is partial; remaining stages unassessed")
     unresolved_summary = "; ".join(unresolved_items) if unresolved_items else "None on tested cases. All tested criteria demonstrated; assessments remain provisional."
 
@@ -415,11 +448,156 @@ def build_report(db, session, include_history=True):
         support_counts[kind] = support_counts.get(kind, 0) + 1
     support_summary = ", ".join(f"{cnt} {k.lower()}" for k, cnt in support_counts.items()) if support_counts else "No external support recorded."
 
+    # 5-point personal summary
+    # 1. demonstrated: Concise summary of what the learner demonstrated across attempts.
+    demonstrated_parts = []
+    if transfer_demonstrated:
+        t_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ").capitalize() for c in transfer_demonstrated})
+        demonstrated_parts.append(f"Demonstrated {len(transfer_demonstrated)} prepared criteria independently on the unfamiliar case: {', '.join(t_labels)}.")
+    elif any(c.get("met") is True for c in baseline_criteria):
+        b_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ").capitalize() for c in baseline_criteria if c.get("met") is True})
+        demonstrated_parts.append(f"Demonstrated initial reasoning on: {', '.join(b_labels)}.")
+    else:
+        demonstrated_parts.append("No criteria were clearly demonstrated in the evaluated responses.")
+    personal_demonstrated = " ".join(demonstrated_parts)
+
+    # 2. missing_or_incorrect: Concise summary of what was missing (omissions), incorrect (reasoning errors), or unclear (ambiguity).
+    crit_issues = []
+    all_evaluated = baseline_criteria + transfer_criteria
+    omissions = [c for c in all_evaluated if c.get("rating") == "not_addressed" or c.get("issue_type") == "missing_requested_part"]
+    incorrect_claims = [c for c in all_evaluated if c.get("issue_type") == "incorrect_claim" or (c.get("rating") == "partially_demonstrated" and c.get("met") is False)]
+    ambiguities = [c for c in all_evaluated if (c.get("rating") == "ambiguous_needs_clarification" or c.get("met") is None) and c.get("rating") != "technical_failure"]
+    if omissions:
+        crit_issues.append("Omissions: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in omissions})))
+    if incorrect_claims:
+        crit_issues.append("Incorrect reasoning: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in incorrect_claims})))
+    if ambiguities:
+        crit_issues.append("Ambiguous explanations: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in ambiguities})))
+    personal_missing_or_incorrect = "; ".join(crit_issues) + "." if crit_issues else "No omissions, incorrect claims, or ambiguous explanations detected."
+
+    # 3. changed_after_help: What changed after help (e.g. revision demonstrated criteria with tutor support vs completed independently).
+    if revision_attempts:
+        if revision_met:
+            r_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in revision_met})
+            personal_changed_after_help = f"With tutor support, revised explanation successfully addressed: {', '.join(r_labels)}."
+        else:
+            personal_changed_after_help = "Revision was attempted with tutor support but did not resolve the identified criteria."
+    elif interventions:
+        personal_changed_after_help = "Support was consulted, but no revision attempt was submitted."
+    else:
+        personal_changed_after_help = "No tutor help or revision was requested."
+
+    # 4. needs_independent_checking: What was demonstrated only with support, or skills not rechecked on fresh case, or remaining unmet transfer criteria.
+    checking_items = []
+    for s in revision_skills_met:
+        transfer_s_met = any(c.get("skill_id") == s and c.get("met") is True for c in transfer_demonstrated)
+        if not transfer_s_met:
+            checking_items.append(f"{s.replace('_', ' ')} (demonstrated with support, needs independent recheck)")
+    for s in concern_skills_not_rechecked:
+        s_label = s.replace("_", " ")
+        if not any(s_label in item for item in checking_items):
+            checking_items.append(f"{s_label} (earlier difficulty not retested on unfamiliar case)")
+    for c in transfer_unmet:
+        s_label = (c.get("skill_id") or c["criterion"]).replace("_", " ")
+        if not any(s_label in item for item in checking_items):
+            checking_items.append(f"{s_label} (unmet on unfamiliar case)")
+    personal_needs_checking = "; ".join(checking_items) + "." if checking_items else "None. All evaluated skills were independently demonstrated or rechecked."
+
+    # 5. recommended_next_step: Concrete targeted next step / practice recommendation.
+    if transfer_unmet:
+        unmet_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in transfer_unmet})
+        personal_next_step = f"Practice applying {', '.join(unmet_labels)} in independent scenarios without assistance."
+    elif concern_skills_not_rechecked:
+        unrechecked = sorted({s.replace("_", " ") for s in concern_skills_not_rechecked})
+        personal_next_step = f"Complete a fresh case focusing on {', '.join(unrechecked)} to verify independent retention."
+    elif has_technical_failure:
+        personal_next_step = "Request reassessment for criteria that had technical failures."
+    elif transfer_ambiguous:
+        amb_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in transfer_ambiguous})
+        personal_next_step = f"Clarify your reasoning on {', '.join(amb_labels)} with explicit cause-and-effect explanations."
+    else:
+        personal_next_step = "Continue to subsequent module concepts and apply these principles in project implementations."
+
+    personal_summary = {
+        "demonstrated": personal_demonstrated,
+        "missing_or_incorrect": personal_missing_or_incorrect,
+        "changed_after_help": personal_changed_after_help,
+        "needs_independent_checking": personal_needs_checking,
+        "recommended_next_step": personal_next_step,
+    }
+
+    # Build concern_cards
+    # For each significant concern (unmet, partial, or unclear criteria in baseline or transfer):
+    concern_cards = []
+    seen_concerns = set()
+    for a in reports:
+        if a.stage not in ("diagnostic", "apply"):
+            continue
+        c_title = (
+            (a.diagram_preset or {}).get("title")
+            or (a.cloze_preset or {}).get("title")
+            or (a.scenario_text.strip().split("\n")[0][:60].strip() if a.scenario_text else "")
+            or a.case_type.replace("_", " ").capitalize()
+        )
+        qparts = a.question_parts or []
+        qpart_map = {p.get("id"): p for p in qparts if isinstance(p, dict) and "id" in p}
+        for c in a.criteria:
+            if (c.get("skill_id") or "").startswith("exercise:"):
+                continue
+            rating = c.get("rating")
+            met = c.get("met")
+            is_concern = (rating in ("partially_demonstrated", "not_addressed", "ambiguous_needs_clarification", "technical_failure")) or (met is not True)
+            if not is_concern:
+                continue
+
+            dedup_key = (a.id, c.get("criterion"))
+            if dedup_key in seen_concerns:
+                continue
+            seen_concerns.add(dedup_key)
+
+            qpart_id = c.get("question_part_id")
+            qpart_obj = qpart_map.get(qpart_id) if qpart_id else None
+            question_part_desc = (qpart_obj.get("description") if qpart_obj else None) or c.get("criterion")
+
+            is_omitted = (rating == "not_addressed" or c.get("issue_type") == "missing_requested_part")
+            learner_quote = "" if is_omitted else (c.get("evidence") or "")
+
+            what_was_correct = c.get("demonstrated_explanation") or "No accurate reasoning identified for this requirement."
+            why_rating = c.get("explanation") or ("Omitted in the learner response." if is_omitted else "The response was incomplete or ambiguous.")
+            next_act = c.get("next_action")
+            how_to_improve = next_act or (
+                f"Explain how you would {question_part_desc.lower()}." if is_omitted
+                else f"State clearly what you meant regarding {c.get('criterion')}." if rating == "ambiguous_needs_clarification"
+                else f"Clarify your reasoning regarding {c.get('criterion')}."
+            )
+            suggested_next_step = next_act or how_to_improve
+
+            issue_type = c.get("issue_type") or (
+                "missing_requested_part" if is_omitted
+                else "ambiguous_wording_or_interpretation" if rating == "ambiguous_needs_clarification"
+                else "technical_failure" if rating == "technical_failure"
+                else "incorrect_claim"
+            )
+
+            concern_cards.append({
+                "case_name": c_title,
+                "question_part": question_part_desc,
+                "learner_quote": learner_quote,
+                "what_was_correct": what_was_correct,
+                "why_rating": why_rating,
+                "how_to_improve": how_to_improve,
+                "suggested_next_step": suggested_next_step,
+                "issue_type": issue_type,
+                "rating": rating,
+            })
+
     session_summary = {
         "unfamiliar_case_summary": unfamiliar_summary,
         "revised_reasoning_summary": revised_summary,
         "unresolved_summary": unresolved_summary,
         "support_summary": support_summary,
+        "personal_summary": personal_summary,
+        "concern_cards": concern_cards,
     }
 
     return SessionReport(session_id=session.id, concept_title=concept.title if concept else "", stage=session.stage,

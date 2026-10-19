@@ -25,6 +25,20 @@ class GapAnalysis(BaseModel):
     status: Literal["complete", "unavailable", "error"] = "complete"
 
 
+class QuestionPartCoverage(BaseModel):
+    question_part_id: str
+    description: str = ""
+    coverage: Literal["answered", "partially_answered", "unanswered", "unclear"] = "unanswered"
+    issue_type: Optional[Literal[
+        "incorrect_claim", "missing_requested_part", "ambiguous_wording",
+        "insufficient_evidence", "technical_failure"
+    ]] = None
+    demonstrated_explanation: Optional[str] = None
+    explanation: Optional[str] = None
+    next_action: Optional[str] = None
+    evidence: str = ""
+
+
 class CriterionResult(BaseModel):
     criterion: str
     skill_id: Optional[str] = None
@@ -35,11 +49,18 @@ class CriterionResult(BaseModel):
     ] = "demonstrated"
     met: Optional[bool] = None
     evidence: str = ""
+    question_part_id: Optional[str] = None
+    coverage: Optional[str] = None
+    issue_type: Optional[str] = None
+    demonstrated_explanation: Optional[str] = None
+    explanation: Optional[str] = None
+    next_action: Optional[str] = None
 
 
 class AssessmentResult(BaseModel):
-    """AI-proposed criterion-level assessment."""
+    """AI-proposed criterion-level assessment with question-part feedback."""
     criteria: list[CriterionResult] = Field(default_factory=list)
+    question_parts_coverage: list[QuestionPartCoverage] = Field(default_factory=list)
     summary: str = ""
     status: Literal["complete", "unavailable", "error"] = "complete"
 
@@ -216,26 +237,51 @@ class OpenAIAdapter:
         answer: str,
         reference_answer: str,
         criteria: list[dict],
+        question_parts: Optional[list[dict]] = None,
     ) -> AssessmentResult:
-        """Propose criterion-level assessment with strict quotation provenance."""
+        """Propose criterion-level assessment with question-part feedback and strict quotation provenance."""
         if not self.available:
             return AssessmentResult(
                 summary="[AI unavailable] Cannot assess — OpenAI API key not configured.",
                 criteria=[],
+                question_parts_coverage=[],
                 status="unavailable",
             )
 
         try:
+            qparts_prompt = ""
+            if question_parts:
+                qparts_prompt = (
+                    f"\n\nREQUIRED QUESTION PARTS:\n{json.dumps(question_parts)}\n"
+                    "For EACH required question part, return in 'question_parts_coverage':\n"
+                    "  - 'question_part_id': exact ID from REQUIRED QUESTION PARTS\n"
+                    "  - 'description': description of this part\n"
+                    "  - 'coverage': 'answered' | 'partially_answered' | 'unanswered' | 'unclear'\n"
+                    "  - 'issue_type': 'incorrect_claim' | 'missing_requested_part' | 'ambiguous_wording' | 'insufficient_evidence' | 'technical_failure' | null\n"
+                    "  - 'demonstrated_explanation': what the learner understood or correctly stated\n"
+                    "  - 'explanation': concise explanation of what is missing, incorrect, or unclear\n"
+                    "  - 'next_action': one focused next action or clarification question\n"
+                    "  - 'evidence': exact quote from answer (MUST be empty string if unanswered or missing)\n\n"
+                    "OMISSION RULES FOR QUESTION PARTS:\n"
+                    "If a requested question part is omitted or unanswered:\n"
+                    "  - coverage MUST be 'unanswered'\n"
+                    "  - issue_type MUST be 'missing_requested_part'\n"
+                    "  - explanation MUST explicitly say: 'You did not answer the part asking you to [description]'\n"
+                    "  - evidence MUST be an empty string '' — NEVER fabricate a quotation for something the learner never said!\n"
+                )
+
             system_prompt = (
-                "You are assessing a learner's answer against specific criteria. "
+                "You are assessing a learner's answer against specific criteria and required question parts. "
                 "For each criterion, evaluate whether the reasoning demonstrates the skill. "
                 "Ratings must be one of: 'demonstrated', 'partially_demonstrated', 'not_addressed', 'ambiguous_needs_clarification'. "
                 "Return met=true for demonstrated, met=false for partially_demonstrated or not_addressed, and met=null for ambiguous. "
                 "An explicit incorrect claim is partially_demonstrated with an exact quote, never not_addressed. "
                 "CRITICAL PROVENANCE RULES:\n"
                 "1. If met=true or met=false with specific claims, the 'evidence' field MUST be an EXACT contiguous quote copied verbatim from the learner's answer. Do not add quotes, brackets, or commentary.\n"
-                "2. Use not_addressed ONLY if the relevant idea is completely absent. If they mention it but get it wrong, use partially_demonstrated with their exact incorrect sentence. For a true omission set met=false and evidence='Concept not addressed in learner response.' Do NOT fabricate a quote.\n"
-                "3. If evidence is ambiguous, set met=null, rating='ambiguous_needs_clarification'.\n"
+                "2. Use not_addressed ONLY if the relevant idea is completely absent. For a true omission set met=false and evidence=''. Do NOT fabricate a quote. "
+                "For an omitted part, the explanation must say 'You did not answer the part asking you to ...'\n"
+                "3. If evidence is ambiguous, set met=null, rating='ambiguous_needs_clarification', issue_type='ambiguous_wording'.\n"
+                "4. Accept equivalent correct reasoning; do not penalize brevity or speech artifacts when reasoning is sound.\n"
                 "Return every supplied criterion verbatim once. Return ONLY valid JSON."
             )
 
@@ -243,8 +289,9 @@ class OpenAIAdapter:
                 f"SCENARIO:\n{scenario}\n\n"
                 f"LEARNER'S ANSWER:\n{answer}\n\n"
                 f"REFERENCE ANSWER:\n{reference_answer}\n\n"
-                f"CRITERIA:\n{json.dumps(criteria)}\n\n"
-                "Return JSON: {\"criteria\": [{\"criterion\": str, \"skill_id\": str, \"rating\": str, \"met\": bool|null, \"evidence\": str}], \"summary\": str}"
+                f"CRITERIA:\n{json.dumps(criteria)}"
+                f"{qparts_prompt}\n\n"
+                "Return JSON: {\"criteria\": [{\"criterion\": str, \"skill_id\": str, \"rating\": str, \"met\": bool|null, \"evidence\": str, \"question_part_id\": str|null, \"coverage\": str|null, \"issue_type\": str|null, \"demonstrated_explanation\": str|null, \"explanation\": str|null, \"next_action\": str|null}], \"question_parts_coverage\": [{\"question_part_id\": str, \"description\": str, \"coverage\": str, \"issue_type\": str|null, \"demonstrated_explanation\": str|null, \"explanation\": str|null, \"next_action\": str|null, \"evidence\": str}], \"summary\": str}"
             )
 
             response = await asyncio.to_thread(self._create_completion,
@@ -252,7 +299,7 @@ class OpenAIAdapter:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=800,
+                max_tokens=1200,
                 json_mode=True,
             )
 
@@ -261,18 +308,27 @@ class OpenAIAdapter:
             if not isinstance(data, dict) or not isinstance(data.get("criteria"), list):
                 raise ValueError("Assessment must explicitly return criteria")
 
-            # Python-side strict verification of quoted evidence
+            # Python-side strict verification of quoted evidence and criteria
             validated_criteria = []
             for item in data.get("criteria", []):
                 name = item.get("criterion", "")
                 met = item.get("met")
                 rating = item.get("rating", "ambiguous_needs_clarification")
-                evidence = item.get("evidence", "")
+                evidence = item.get("evidence", "") or ""
                 skill_id = item.get("skill_id")
+                qpart_id = item.get("question_part_id")
+                cov = item.get("coverage")
+                issue = item.get("issue_type")
+                dem_exp = item.get("demonstrated_explanation")
+                exp = item.get("explanation")
+                next_act = item.get("next_action")
+
                 expected_met = {"demonstrated": True, "partially_demonstrated": False,
                     "not_addressed": False, "ambiguous_needs_clarification": None, "technical_failure": None}
                 if rating not in expected_met or (met is not None and type(met) is not bool) or met is not expected_met[rating]:
                     met, rating, evidence = None, "technical_failure", "Provider returned inconsistent rating/verdict fields."
+                    issue = "technical_failure"
+                    cov = "unclear"
 
                 # Find matched criterion from rubric to ensure skill_id
                 matched_rubric = next((c for c in criteria if c["criterion"] == name), None)
@@ -281,14 +337,23 @@ class OpenAIAdapter:
 
                 # Verify quote provenance if met is True or False
                 if rating == "not_addressed":
-                    evidence = "Concept not addressed in learner response."
+                    evidence = ""
                     met = False
+                    cov = cov or "unanswered"
+                    issue = issue or "missing_requested_part"
+                    if not exp or "did not answer" not in exp.lower():
+                        part_obj = next((qp for qp in (question_parts or []) if qp["id"] == qpart_id), None)
+                        p_desc = part_obj["description"] if part_obj else "address this requirement"
+                        exp = f"You did not answer the part asking you to {p_desc}."
                 elif met is not None and evidence:
                     if evidence.strip().lower() not in answer.lower():
                         # Unverifiable quote — downgrade to ambiguous null rather than accepting hallucination
                         met = None
                         rating = "ambiguous_needs_clarification"
-                        evidence = "Assessment evidence could not be verified in the submitted answer."
+                        evidence = ""
+                        issue = "insufficient_evidence"
+                        cov = "unclear"
+                        exp = "Assessment evidence could not be verified in the submitted answer."
 
                 validated_criteria.append(
                     CriterionResult(
@@ -297,11 +362,57 @@ class OpenAIAdapter:
                         rating=rating,
                         met=met,
                         evidence=evidence,
+                        question_part_id=qpart_id,
+                        coverage=cov,
+                        issue_type=issue,
+                        demonstrated_explanation=dem_exp,
+                        explanation=exp,
+                        next_action=next_act,
                     )
                 )
 
+            # Process and validate question_parts_coverage
+            validated_parts = []
+            returned_parts = {p.get("question_part_id"): p for p in data.get("question_parts_coverage", []) if isinstance(p, dict)}
+            for qp in (question_parts or []):
+                qp_id = qp["id"]
+                p_data = returned_parts.get(qp_id, {})
+                cov = p_data.get("coverage", "unanswered")
+                if cov not in ("answered", "partially_answered", "unanswered", "unclear"):
+                    cov = "unclear"
+                issue = p_data.get("issue_type")
+                if issue not in ("incorrect_claim", "missing_requested_part", "ambiguous_wording", "insufficient_evidence", "technical_failure", None):
+                    issue = None
+                p_ev = p_data.get("evidence", "") or ""
+                p_dem = p_data.get("demonstrated_explanation")
+                p_exp = p_data.get("explanation")
+                p_act = p_data.get("next_action")
+
+                if cov == "unanswered" or issue == "missing_requested_part":
+                    p_ev = ""
+                    issue = "missing_requested_part"
+                    if not p_exp or "did not answer" not in p_exp.lower():
+                        p_exp = f"You did not answer the part asking you to {qp['description']}."
+                elif p_ev and p_ev.strip().lower() not in answer.lower():
+                    p_ev = ""
+                    cov = "unclear"
+                    issue = "insufficient_evidence"
+                    p_exp = "Evidence could not be verified in the submitted answer."
+
+                validated_parts.append(QuestionPartCoverage(
+                    question_part_id=qp_id,
+                    description=qp.get("description", ""),
+                    coverage=cov,
+                    issue_type=issue,
+                    demonstrated_explanation=p_dem,
+                    explanation=p_exp,
+                    next_action=p_act,
+                    evidence=p_ev,
+                ))
+
             return AssessmentResult(
                 criteria=validated_criteria,
+                question_parts_coverage=validated_parts,
                 summary=data.get("summary", ""),
                 status="complete",
             )
@@ -311,6 +422,7 @@ class OpenAIAdapter:
             return AssessmentResult(
                 summary=f"[AI error] Assessment failed: {type(e).__name__}",
                 criteria=[],
+                question_parts_coverage=[],
                 status="error",
             )
 
