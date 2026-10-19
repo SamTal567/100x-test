@@ -3,6 +3,11 @@ import type { TranscriptionSegment } from '../types'
 
 export type DictationMode = 'append' | 'replace'
 
+export function transcriptionDraft(result: { raw_transcript: string | null; cleaned_transcript?: string | null }) {
+  const rawTranscript = result.raw_transcript ?? ''
+  return { rawTranscript, editableTranscript: result.cleaned_transcript ?? rawTranscript }
+}
+
 export function editDraftText(draft: AnswerDraft, text: string): AnswerDraft {
   return text.trim() ? { ...draft, text }
     : { ...draft, text, inputMode: 'typed', transcriptionId: null, transcriptionSegments: [] }

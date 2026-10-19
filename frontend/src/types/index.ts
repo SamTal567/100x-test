@@ -360,6 +360,7 @@ export interface SessionReport {
 export interface TranscriptionResult {
   id: string
   raw_transcript: string | null
+  cleaned_transcript?: string | null
   confirmed_text: string | null
   status: 'pending' | 'transcribed' | 'confirmed' | 'failed'
   created_at: string

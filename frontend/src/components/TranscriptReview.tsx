@@ -12,7 +12,14 @@ export const TranscriptReview: React.FC<{
     <label htmlFor={id}>Review and edit this recording’s transcript</label>
     <textarea id={id} aria-label="Review and edit transcript" className="textarea" rows={4} maxLength={30000}
       value={transcript} onChange={event => onChange(event.target.value)} />
-    {rawTranscript !== transcript && <p className="muted-note">Edited from this recording’s raw transcription.</p>}
+    {rawTranscript !== transcript && <>
+      <p className="muted-note">This editable draft differs from the original transcription. Recognised pause and speaker cues are hidden by default.</p>
+      <details><summary>Show original transcription</summary>
+        <p style={{ whiteSpace: 'pre-wrap' }}>{rawTranscript}</p>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => onChange(rawTranscript)}>Use original transcript</button>
+      </details>
+    </>}
+    {!transcript.trim() && <p className="muted-note">Enter text or record again before adding this clip.</p>}
     <p className="muted-note">{hasAnswer ? 'Add this recording to the end of your existing answer. Replacement is a separate choice.' : 'Use this transcript to start your answer.'} You can edit the combined answer before submitting it.</p>
     <div className="action-wrap">
       <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>Cancel</button>

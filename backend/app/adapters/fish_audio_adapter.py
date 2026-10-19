@@ -10,11 +10,11 @@ When FISH_AUDIO_API_KEY is not set, returns explicit unavailable state.
 from __future__ import annotations
 from typing import Optional
 import logging
-import re
 
 import httpx
 
 from app.config import get_settings
+from app.transcript_text import clean_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,11 @@ class FishAudioAdapter:
                     "model": self.settings.fish_audio_model,
                 }
                 data = {
-                    "model": self.settings.fish_audio_model,
                     "language": "en",
+                    "ignore_timestamps": "true",
                 }
+                if self.settings.fish_audio_model == "transcribe-1-pro":
+                    data["tag_audio_events"] = "false"
 
                 response = await client.post(
                     FISH_AUDIO_ASR_URL,
@@ -76,13 +78,13 @@ class FishAudioAdapter:
 
                 result = response.json()
                 raw_text = result.get("text", "")
-                # Clean inline speaker markers like <|speaker:0|> from transcript
-                cleaned_transcript = re.sub(r"<\|speaker:\d+\|>\s*", "", raw_text).strip()
+                cleaned_transcript = clean_transcript(raw_text)
                 duration = result.get("duration", None)
 
                 return {
                     "success": True,
                     "transcript": cleaned_transcript,
+                    "raw_transcript": raw_text,
                     "duration_ms": int(duration * 1000) if duration else None,
                     "error": None,
                 }

@@ -273,6 +273,7 @@ class SessionOut(BaseModel):
 class TranscriptionOut(BaseModel):
     id: str
     raw_transcript: Optional[str] = None
+    cleaned_transcript: Optional[str] = None
     confirmed_text: Optional[str] = None
     status: str
     created_at: datetime

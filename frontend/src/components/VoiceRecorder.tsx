@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client'
 import { TranscriptReview } from './TranscriptReview'
 import type { DictationMode } from '../lib/dictation'
+import { transcriptionDraft } from '../lib/dictation'
 
 interface VoiceRecorderProps {
   sessionId: string
@@ -105,9 +106,9 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
       if (!mountedRef.current) return
       if (result.status === 'failed' || !result.raw_transcript) throw new Error('No usable transcript was returned')
       setTranscriptionId(result.id)
-      const text = result.raw_transcript || ''
-      setRawTranscript(text)
-      setEditedTranscript(text)
+      const draft = transcriptionDraft(result)
+      setRawTranscript(draft.rawTranscript)
+      setEditedTranscript(draft.editableTranscript)
       setRecordingState('reviewing')
     } catch (err: unknown) {
       if (!mountedRef.current) return

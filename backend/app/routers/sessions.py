@@ -186,7 +186,7 @@ async def upload_transcription(
     )
 
     if result["success"]:
-        transcription.raw_transcript = result["transcript"]
+        transcription.raw_transcript = result.get("raw_transcript", result["transcript"])
         transcription.audio_duration_ms = result["duration_ms"]
         transcription.status = "transcribed"
     else:
@@ -202,7 +202,10 @@ async def upload_transcription(
             detail=result["error"],
         )
 
-    return TranscriptionOut.model_validate(transcription)
+    from app.transcript_text import clean_transcript
+    output = TranscriptionOut.model_validate(transcription)
+    output.cleaned_transcript = clean_transcript(transcription.raw_transcript or "")
+    return output
 
 
 @router.post("/{session_id}/attachments", response_model=AttachmentOut, status_code=201)

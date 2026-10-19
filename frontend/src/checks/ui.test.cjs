@@ -26,6 +26,27 @@ const { AuthModal } = require('../components/AuthModal.tsx')
 const { AuthPage } = require('../pages/AuthPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
+test('dictation review starts with cleaned text while retaining the exact provider original', () => {
+  const { transcriptionDraft } = require('../lib/dictation.ts')
+  const raw = '<|speaker:0|>The record [pause] persists.'
+  assert.deepEqual(transcriptionDraft({ raw_transcript: raw, cleaned_transcript: 'The record persists.' }),
+    { rawTranscript: raw, editableTranscript: 'The record persists.' })
+  assert.deepEqual(transcriptionDraft({ raw_transcript: raw }),
+    { rawTranscript: raw, editableTranscript: raw })
+  assert.equal(transcriptionDraft({ raw_transcript: '[pause]', cleaned_transcript: '' }).editableTranscript, '')
+})
+
+test('review exposes the raw transcript for restoration without submitting it automatically', () => {
+  const { TranscriptReview } = require('../components/TranscriptReview.tsx')
+  const html = render(TranscriptReview, { existingText: 'Earlier answer', transcript: 'A record persists.',
+    rawTranscript: '[Woman speaking] A record [pause] persists.', onChange: () => {}, onConfirm: () => {},
+    onCancel: () => {}, onRecordAgain: () => {} })
+  assert.match(html, /Show original transcription/)
+  assert.match(html, /\[Woman speaking\] A record \[pause\] persists\./)
+  assert.match(html, /Use original transcript/)
+  assert.match(html, /Add to my answer/)
+})
+
 
 test('confirmed dictation appends to typed text and keeps all accepted clip references after reload', () => {
   const { applyDictation } = require('../lib/dictation.ts')
