@@ -49,6 +49,8 @@ class Settings(BaseSettings):
             # Cached get_settings keeps one local key for this process only.
             # Configure SECRET_KEY explicitly to preserve anonymous sessions on restart.
             self.secret_key = secrets.token_urlsafe(48)
+        if self.database_url.startswith("postgres://"):
+            self.database_url = self.database_url.replace("postgres://", "postgresql://", 1)
         return self
 
     # ── CORS (Cross-Origin Resource Sharing) ──────────────────────────────

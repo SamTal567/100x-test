@@ -11,7 +11,7 @@ import type {
   CaseReviewItem,
 } from '../types'
 
-const BASE_URL = ''
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 export class ApiError extends Error {
   readonly status: number
