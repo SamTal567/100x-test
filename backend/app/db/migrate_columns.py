@@ -83,14 +83,17 @@ def ensure_schema_columns(engine: Engine) -> None:
             for col_name, col_type in columns:
                 if col_name not in existing_cols:
                     logger.info("Adding column %s to %s", col_name, table_name)
-                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
-                    if table_name == "criterion_assessments" and col_name == "rating":
-                        # Only initialize a NEW detail column. Existing detailed judgments
-                        # are historical evidence and must never be rewritten at startup.
-                        conn.execute(text("""
-                            UPDATE criterion_assessments SET rating = CASE
-                                WHEN met = true THEN 'demonstrated'
-                                WHEN met = false THEN 'not_addressed'
-                                ELSE 'ambiguous_needs_clarification'
-                            END
-                        """))
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                        if table_name == "criterion_assessments" and col_name == "rating":
+                            # Only initialize a NEW detail column. Existing detailed judgments
+                            # are historical evidence and must never be rewritten at startup.
+                            conn.execute(text("""
+                                UPDATE criterion_assessments SET rating = CASE
+                                    WHEN met = true THEN 'demonstrated'
+                                    WHEN met = false THEN 'not_addressed'
+                                    ELSE 'ambiguous_needs_clarification'
+                                END
+                            """))
+                    except Exception as exc:
+                        logger.warning("Could not add column %s to %s (permission or concurrent): %s", col_name, table_name, exc)
