@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 AssessmentRating = Literal[
@@ -367,15 +368,34 @@ class HealthResponse(BaseModel):
 
 # ── User Authentication ──────────────────────────────────────────
 
+_EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 class UserRegisterRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=6, max_length=128)
     full_name: Optional[str] = Field(default=None, max_length=255)
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_REGEX.match(v):
+            raise ValueError("Invalid email format")
+        return v
+
 
 class UserLoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_REGEX.match(v):
+            raise ValueError("Invalid email format")
+        return v
 
 
 class UserOut(BaseModel):
