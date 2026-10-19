@@ -5,10 +5,12 @@ from typing import Optional, Literal
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.services.evidence import normalized_proposal, normalize_coverage, normalize_issue_type
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +30,9 @@ class GapAnalysis(BaseModel):
 class QuestionPartCoverage(BaseModel):
     question_part_id: str
     description: str = ""
-    coverage: Literal["answered", "partially_answered", "unanswered", "unclear"] = "unanswered"
+    coverage: Literal["answered", "partly_answered", "unanswered", "unclear"] = "unclear"
     issue_type: Optional[Literal[
-        "incorrect_claim", "missing_requested_part", "ambiguous_wording",
+        "incorrect_claim", "missing_requested_part", "ambiguous_wording_or_interpretation",
         "insufficient_evidence", "technical_failure"
     ]] = None
     demonstrated_explanation: Optional[str] = None
@@ -267,8 +269,8 @@ class OpenAIAdapter:
                     "For EACH required question part, return in 'question_parts_coverage':\n"
                     "  - 'question_part_id': exact ID from REQUIRED QUESTION PARTS\n"
                     "  - 'description': description of this part\n"
-                    "  - 'coverage': 'answered' | 'partially_answered' | 'unanswered' | 'unclear'\n"
-                    "  - 'issue_type': 'incorrect_claim' | 'missing_requested_part' | 'ambiguous_wording' | 'insufficient_evidence' | 'technical_failure' | null\n"
+                    "  - 'coverage': 'answered' | 'partly_answered' | 'unanswered' | 'unclear'\n"
+                    "  - 'issue_type': 'incorrect_claim' | 'missing_requested_part' | 'ambiguous_wording_or_interpretation' | 'insufficient_evidence' | 'technical_failure' | null\n"
                     "  - 'demonstrated_explanation': what the learner understood or correctly stated\n"
                     "  - 'explanation': concise explanation of what is missing, incorrect, or unclear\n"
                     "  - 'next_action': one focused next action or clarification question\n"
@@ -291,7 +293,7 @@ class OpenAIAdapter:
                 "1. If met=true or met=false with specific claims, the 'evidence' field MUST be an EXACT contiguous quote copied verbatim from the learner's answer. Do not add quotes, brackets, or commentary.\n"
                 "2. Use not_addressed ONLY if the relevant idea is completely absent. For a true omission set met=false and evidence=''. Do NOT fabricate a quote. "
                 "For an omitted part, the explanation must say 'You did not answer the part asking you to ...'\n"
-                "3. If evidence is ambiguous, set met=null, rating='ambiguous_needs_clarification', issue_type='ambiguous_wording'.\n"
+                "3. If evidence is ambiguous, set met=null, rating='ambiguous_needs_clarification', issue_type='ambiguous_wording_or_interpretation'.\n"
                 "4. Accept equivalent correct reasoning; do not penalize brevity or speech artifacts when reasoning is sound.\n"
                 "Return every supplied criterion verbatim once. Return ONLY valid JSON."
             )
@@ -330,95 +332,67 @@ class OpenAIAdapter:
             # Python-side strict verification of quoted evidence and criteria
             validated_criteria = []
             for item in data.get("criteria", []):
+                if not isinstance(item, dict):
+                    continue
                 name = item.get("criterion", "")
-                met = item.get("met")
-                rating = item.get("rating", "ambiguous_needs_clarification")
-                evidence = item.get("evidence", "") or ""
-                skill_id = item.get("skill_id")
-                qpart_id = item.get("question_part_id")
-                cov = item.get("coverage")
-                issue = item.get("issue_type")
-                dem_exp = item.get("demonstrated_explanation")
-                exp = item.get("explanation")
-                next_act = item.get("next_action")
-
-                expected_met = {"demonstrated": True, "partially_demonstrated": False,
-                    "not_addressed": False, "ambiguous_needs_clarification": None, "technical_failure": None}
-                if rating not in expected_met or (met is not None and type(met) is not bool) or met is not expected_met[rating]:
-                    met, rating, evidence = None, "technical_failure", "Provider returned inconsistent rating/verdict fields."
-                    issue = "technical_failure"
-                    cov = "unclear"
-
-                # Find matched criterion from rubric to ensure skill_id
                 matched_rubric = next((c for c in criteria if c["criterion"] == name), None)
-                if matched_rubric and not skill_id:
-                    skill_id = matched_rubric.get("skill_id")
-
-                # Verify quote provenance if met is True or False
-                if rating == "not_addressed":
-                    evidence = ""
-                    met = False
-                    cov = cov or "unanswered"
-                    issue = issue or "missing_requested_part"
-                    if not exp or "did not answer" not in exp.lower():
-                        part_obj = next((qp for qp in (question_parts or []) if (qp.get("id") or qp.get("part_id")) == qpart_id), None)
-                        p_desc = part_obj["description"] if part_obj else "address this requirement"
-                        exp = f"You did not answer the part asking you to {p_desc}."
-                elif met is not None and evidence:
-                    if evidence.strip().lower() not in answer.lower():
-                        # Unverifiable quote — downgrade to ambiguous null rather than accepting hallucination
-                        met = None
-                        rating = "ambiguous_needs_clarification"
-                        evidence = ""
-                        issue = "insufficient_evidence"
-                        cov = "unclear"
-                        exp = "Assessment evidence could not be verified in the submitted answer."
-
+                if matched_rubric is None:
+                    continue
+                proposal = normalized_proposal(SimpleNamespace(**item), answer, "complete",
+                    question_parts=question_parts, criterion_id=name)
                 validated_criteria.append(
                     CriterionResult(
                         criterion=name,
-                        skill_id=skill_id,
-                        rating=rating,
-                        met=met,
-                        evidence=evidence,
-                        question_part_id=qpart_id,
-                        coverage=cov,
-                        issue_type=issue,
-                        demonstrated_explanation=dem_exp,
-                        explanation=exp,
-                        next_action=next_act,
+                        skill_id=matched_rubric.get("skill_id"),
+                        rating=proposal.rating,
+                        met=proposal.met,
+                        evidence=proposal.evidence,
+                        question_part_id=proposal.question_part_id,
+                        coverage=proposal.coverage,
+                        issue_type=proposal.issue_type,
+                        demonstrated_explanation=proposal.demonstrated_explanation,
+                        explanation=proposal.explanation,
+                        next_action=proposal.next_action,
                     )
                 )
 
             # Process and validate question_parts_coverage
             validated_parts = []
-            returned_parts = {p.get("question_part_id"): p for p in data.get("question_parts_coverage", []) if isinstance(p, dict)}
+            returned_parts = data.get("question_parts_coverage") or []
+            if not isinstance(returned_parts, list):
+                returned_parts = []
             for qp in (question_parts or []):
                 qp_id = qp.get("id") or qp.get("part_id")
                 if not qp_id:
                     continue
-                p_data = returned_parts.get(qp_id, {})
-                cov = p_data.get("coverage", "unanswered")
-                if cov not in ("answered", "partially_answered", "unanswered", "unclear"):
-                    cov = "unclear"
-                issue = p_data.get("issue_type")
-                if issue not in ("incorrect_claim", "missing_requested_part", "ambiguous_wording", "insufficient_evidence", "technical_failure", None):
-                    issue = None
+                matches = [p for p in returned_parts if isinstance(p, dict) and p.get("question_part_id") == qp_id]
+                p_data = matches[0] if len(matches) == 1 else {}
+                cov = normalize_coverage(p_data.get("coverage"))
+                issue = normalize_issue_type(p_data.get("issue_type"))
                 p_ev = p_data.get("evidence", "") or ""
                 p_dem = p_data.get("demonstrated_explanation")
                 p_exp = p_data.get("explanation")
                 p_act = p_data.get("next_action")
 
-                if cov == "unanswered" or issue == "missing_requested_part":
+                if not cov or issue == "technical_failure":
+                    cov, issue, p_ev, p_dem = "unclear", "technical_failure", "", None
+                    p_exp = "Assessment did not return usable coverage for this question part."
+                    p_act = "Request reassessment for this question part."
+                elif cov == "unanswered":
                     p_ev = ""
+                    p_dem = None
                     issue = "missing_requested_part"
                     if not p_exp or "did not answer" not in p_exp.lower():
                         p_exp = f"You did not answer the part asking you to {qp.get('description', 'address this requirement')}."
-                elif p_ev and p_ev.strip().lower() not in answer.lower():
+                elif (p_ev and p_ev.strip().casefold() not in answer.casefold()) or (cov in ("answered", "partly_answered") and not p_ev.strip()):
                     p_ev = ""
+                    p_dem = None
                     cov = "unclear"
                     issue = "insufficient_evidence"
                     p_exp = "Evidence could not be verified in the submitted answer."
+                    p_act = "Clarify your answer with specific reasoning from the scenario."
+                elif cov == "answered" and issue is not None:
+                    cov = "partly_answered" if issue in ("incorrect_claim", "missing_requested_part") else "unclear"
 
                 validated_parts.append(QuestionPartCoverage(
                     question_part_id=qp_id,

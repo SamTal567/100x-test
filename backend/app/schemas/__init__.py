@@ -349,6 +349,7 @@ class CaseReviewSubmit(BaseModel):
     assumptions: Optional[list[str]] = None
     diagram_preset: Optional[dict] = None
     cloze_preset: Optional[dict] = None
+    question_parts: Optional[list[dict]] = None
 
     @field_validator("reviewer_name")
     @classmethod

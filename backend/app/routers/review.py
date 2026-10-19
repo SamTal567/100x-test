@@ -154,6 +154,32 @@ def review_assessment(
         assessment.met = body.met
         assessment.rating = ("demonstrated" if body.met is True else
                              "not_addressed" if body.met is False else "ambiguous_needs_clarification")
+    if assessment.rating != previous["rating"] or assessment.met is not previous["met"]:
+        # Retain the old proposal in review history, but do not display its
+        # now-contradictory omission/praise as the reviewer's current judgment.
+        assessment.coverage = {"demonstrated": "answered", "partially_demonstrated": "partly_answered",
+            "not_addressed": "unanswered"}.get(assessment.rating, "unclear")
+        assessment.issue_type = ("missing_requested_part" if assessment.rating == "not_addressed" else
+            "technical_failure" if assessment.rating == "technical_failure" else
+            "ambiguous_wording_or_interpretation" if assessment.rating == "ambiguous_needs_clarification" else None)
+        assessment.demonstrated_explanation = None
+        assessment.explanation = body.reviewer_notes or "Criterion judgment was corrected by an authorized reviewer."
+        assessment.next_action = None
+        if assessment.rating in ("not_addressed", "technical_failure"):
+            assessment.evidence = ""
+        attempt = assessment.attempt
+        authored_parts = (attempt.case_snapshot or {}).get("question_parts") or []
+        affected = {p.get("id") or p.get("part_id") for p in authored_parts
+            if assessment.criterion in p.get("criteria_names", [])}
+        if assessment.question_part_id:
+            affected.add(assessment.question_part_id)
+        attempt.question_parts_coverage = [
+            {**part, "coverage": "unclear", "issue_type": "insufficient_evidence", "evidence": "",
+                "demonstrated_explanation": None,
+                "explanation": "A criterion judgment was corrected by a reviewer; question-part coverage needs reassessment.",
+                "next_action": "Request reassessment of this question part."}
+            if part.get("question_part_id") in affected else part
+            for part in (attempt.question_parts_coverage or [])]
     if "reviewer_notes" in body.model_fields_set:
         assessment.reviewer_notes = body.reviewer_notes
     assessment.reviewed_at = datetime.now(timezone.utc)
@@ -175,6 +201,9 @@ def _assessment_snapshot(assessment: CriterionAssessment) -> dict:
         "rating": assessment.rating, "met": assessment.met,
         "status": assessment.status, "evidence": assessment.evidence,
         "reviewer_notes": assessment.reviewer_notes,
+        **{name: getattr(assessment, name) for name in ("question_part_id", "coverage", "issue_type",
+            "demonstrated_explanation", "explanation", "next_action")},
+        "question_parts_coverage": copy.deepcopy(assessment.attempt.question_parts_coverage) if assessment.attempt else None,
     }
 
 
@@ -217,9 +246,9 @@ def review_case(
         raise HTTPException(409, "Case requires a prepared rubric before review.")
     values = {name: copy.deepcopy(getattr(original, name)) for name in (
         "concept_id", "authored_id", "stage", "case_type", "scenario_text",
-        "sort_order", "source", "response_format", "assumptions", "diagram_preset", "cloze_preset",
+        "sort_order", "source", "response_format", "assumptions", "diagram_preset", "cloze_preset", "question_parts",
     )}
-    for name in ("scenario_text", "assumptions", "diagram_preset", "cloze_preset"):
+    for name in ("scenario_text", "assumptions", "diagram_preset", "cloze_preset", "question_parts"):
         if name in body.model_fields_set:
             if name == "scenario_text" and body.scenario_text is None:
                 raise HTTPException(422, "Scenario must not be empty.")

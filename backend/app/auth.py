@@ -13,8 +13,8 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import Request, Response, Depends
-from itsdangerous import URLSafeSerializer
+from fastapi import Request, Response, Depends, HTTPException
+from itsdangerous import BadData, URLSafeSerializer
 import jwt
 from sqlalchemy.orm import Session
 
@@ -79,31 +79,56 @@ def _get_serializer() -> URLSafeSerializer:
     return URLSafeSerializer(settings.secret_key, salt="concept-check-session")
 
 
-def get_owner_id(request: Request, response: Response) -> str:
-    """Derive owner ID from JWT Bearer token, session cookie, or anonymous ID."""
-    # 1. Bearer Token in Authorization header
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        payload = decode_access_token(token)
-        if payload and payload.get("sub"):
-            return payload["sub"]
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    """Resolve the same credential for profile and learner ownership checks.
 
-    # 2. Signed Cookie
+    Invalid explicit bearer credentials must never fall back to another account's
+    cookies. The dedicated auth cookie takes precedence over legacy session JWTs.
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header is not None:
+        scheme, separator, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not token.strip():
+            raise HTTPException(401, "A valid bearer token is required")
+        token = token.strip()
+    elif "cc_auth_token" in request.cookies:
+        token = request.cookies["cc_auth_token"]
+    else:
+        token = request.cookies.get("cc_session")
+
+    payload = decode_access_token(token) if token else None
+    if not payload or not isinstance(payload.get("sub"), str) or not payload["sub"]:
+        if auth_header is not None:
+            raise HTTPException(401, "The bearer token is invalid or expired")
+        return None
+    user = db.get(User, payload["sub"])
+    if not user:
+        raise HTTPException(401, "The authenticated account is no longer available")
+    return user
+
+
+def get_owner_id(request: Request, response: Response, db: Session = Depends(get_db)) -> str:
+    """Require an account outside explicit local development and test modes."""
+    current_user = get_current_user(request, db)
+    if current_user:
+        return current_user.id
+
+    settings = get_settings()
+    allow_anonymous = settings.environment.strip().lower() in {"development", "dev", "test", "testing"}
+    if not allow_anonymous or "cc_auth_token" in request.cookies:
+        raise HTTPException(401, "Sign in to access learning sessions")
+
+    # Preserve local anonymous demos and pre-login session claiming.
     serializer = _get_serializer()
     cookie_value = request.cookies.get("cc_session")
 
     owner_id = None
     if cookie_value:
-        # Check if cookie itself is a JWT token
-        payload = decode_access_token(cookie_value)
-        if payload and payload.get("sub"):
-            return payload["sub"]
-
-        # Check serializer
         try:
             owner_id = serializer.loads(cookie_value)
-        except Exception:
+        except BadData:
+            owner_id = None
+        if not isinstance(owner_id, str):
             owner_id = None
 
     if not owner_id:
@@ -113,29 +138,9 @@ def get_owner_id(request: Request, response: Response) -> str:
             key="cc_session",
             value=signed,
             httponly=True,
-            secure=get_settings().environment.lower() in {"production", "prod"},
+            secure=settings.environment.strip().lower() in {"production", "prod"},
             samesite="lax",
             max_age=60 * 60 * 24 * 30,  # 30 days
         )
 
     return owner_id
-
-
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
-    """Retrieve the currently authenticated User or None if unauthenticated."""
-    auth_header = request.headers.get("Authorization")
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-    elif request.cookies.get("cc_auth_token"):
-        token = request.cookies.get("cc_auth_token")
-
-    if not token:
-        return None
-
-    payload = decode_access_token(token)
-    if not payload or not payload.get("sub"):
-        return None
-
-    user = db.get(User, payload["sub"])
-    return user

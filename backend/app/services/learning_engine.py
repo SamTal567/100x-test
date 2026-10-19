@@ -526,7 +526,7 @@ class SessionService:
             "source_provenance": "frozen_attempt" if original and original.case_snapshot and original.case_prompt_id == case.id else "current_prepared_case",
             "reference_answer": prepared.get("reference_answer", ""), "criteria": prepared.get("criteria", []),
             "question_parts": snapshot.get("question_parts"),
-            "question_parts_coverage": getattr(original, "question_parts_coverage", None),
+            "question_parts_coverage": getattr(original, "question_parts_coverage", None) if same_case else None,
             "assessment_attempt_id": original.id if same_case else None,
             "assessments": source_assessments if same_case else [],
             "source_attempt": {"attempt_id": original.id, "case_id": original.case_prompt_id,

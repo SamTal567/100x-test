@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { CataloguePage } from './pages/CataloguePage'
 import { SessionPage } from './pages/SessionPage'
 import { AuthPage } from './pages/AuthPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { ReviewerDrawer } from './components/ReviewerDrawer'
-import { api } from './api/client'
+import { api, AUTH_REQUIRED_EVENT } from './api/client'
 import type { HealthResponse, User } from './types'
 import './index.css'
 
@@ -17,62 +17,123 @@ export function App() {
   const [reviewerOpen, setReviewerOpen] = useState(false)
   const [reviewRevision, setReviewRevision] = useState(0)
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const identity = useRef<User | null>(null)
+  const authVersion = useRef(0)
+
+  const clearIdentity = useCallback((message: string | null = null) => {
+    authVersion.current += 1
+    identity.current = null
+    setCurrentUser(null)
+    setCurrentSessionId(null)
+    setActiveView('catalogue')
+    setReviewerOpen(false)
+    setAuthLoading(false)
+    setAuthError(message)
+    localStorage.removeItem('cc_active_session_id')
+    localStorage.removeItem('cc_active_session_owner')
+    localStorage.removeItem('cc_active_view')
+  }, [])
+
+  const checkAuthentication = useCallback(async (restoreSelection = false) => {
+    const version = ++authVersion.current
+    try {
+      const result = await api.getMe()
+      if (version !== authVersion.current) return
+      if (result.authenticated && result.user) {
+        const previousId = identity.current?.id
+        identity.current = result.user
+        setCurrentUser(result.user)
+        if (previousId !== result.user.id) {
+          setCurrentSessionId(null)
+          setActiveView('catalogue')
+          setReviewerOpen(false)
+        }
+        // Read the saved selection only after its account has been verified.
+        if (restoreSelection && localStorage.getItem('cc_active_session_owner') === result.user.id) {
+          const savedSession = localStorage.getItem('cc_active_session_id')
+          if (savedSession && localStorage.getItem('cc_active_view') === 'session') {
+            setCurrentSessionId(savedSession)
+            setActiveView('session')
+          }
+        }
+        setAuthLoading(false)
+      } else {
+        clearIdentity(identity.current ? 'Your sign-in expired. Sign in again to access your saved sessions.' : null)
+      }
+    } catch {
+      if (version !== authVersion.current) return
+      setAuthError('Authentication could not be checked. Check your connection and retry.')
+      setAuthLoading(false)
+    }
+  }, [clearIdentity])
 
   useEffect(() => {
-    if (currentUser) {
+    if (!authLoading && currentUser) {
       localStorage.setItem('cc_active_view', activeView)
     }
-  }, [activeView, currentUser])
+  }, [activeView, currentUser, authLoading])
 
   useEffect(() => {
-    if (currentUser && currentSessionId) {
-      localStorage.setItem('cc_active_session_id', currentSessionId)
-    } else if (!currentUser) {
-      localStorage.removeItem('cc_active_session_id')
+    if (!authLoading && currentUser) {
+      localStorage.setItem('cc_active_session_owner', currentUser.id)
+      if (currentSessionId) localStorage.setItem('cc_active_session_id', currentSessionId)
+      else localStorage.removeItem('cc_active_session_id')
     }
-  }, [currentSessionId, currentUser])
+  }, [currentSessionId, currentUser, authLoading])
 
   useEffect(() => {
     api.getHealth().then(setHealth).catch(() => null)
-    api.getMe().then(res => {
-      if (res.authenticated && res.user) {
-        setCurrentUser(res.user)
-        const savedSession = localStorage.getItem('cc_active_session_id')
-        const savedView = localStorage.getItem('cc_active_view')
-        if (savedSession && savedView === 'session') {
-          setCurrentSessionId(savedSession)
-          setActiveView('session')
-        }
-      } else {
-        setCurrentUser(null)
-      }
-    }).catch(() => {
-      setCurrentUser(null)
-    }).finally(() => {
-      setAuthLoading(false)
-    })
-  }, [])
+    void Promise.resolve().then(() => checkAuthentication(true))
+    return () => { authVersion.current += 1 }
+  }, [checkAuthentication])
 
-  const handleLogout = async () => {
-    try {
-      await api.logout()
-    } finally {
+  useEffect(() => {
+    const expired = () => clearIdentity('Your sign-in expired. Sign in again to access your saved sessions. Your submitted answers are saved.')
+    const changed = (event: StorageEvent) => {
+      if (event.key !== 'cc_auth_token') return
+      // Hide the previous account while verifying the new shared browser identity.
+      identity.current = null
       setCurrentUser(null)
       setCurrentSessionId(null)
-      setActiveView('catalogue')
-      localStorage.removeItem('cc_active_session_id')
-      localStorage.removeItem('cc_jwt_token')
+      setReviewerOpen(false)
+      setAuthLoading(true)
+      setAuthError(null)
+      void checkAuthentication()
+    }
+    window.addEventListener(AUTH_REQUIRED_EVENT, expired)
+    window.addEventListener('storage', changed)
+    return () => {
+      window.removeEventListener(AUTH_REQUIRED_EVENT, expired)
+      window.removeEventListener('storage', changed)
+    }
+  }, [checkAuthentication, clearIdentity])
+
+  const handleLogout = async () => {
+    const version = authVersion.current
+    try {
+      await api.logout()
+      if (version === authVersion.current) clearIdentity()
+    } catch {
+      if (version === authVersion.current) setAuthError('Sign-out could not be confirmed. You are still signed in. Check your connection and try Sign Out again.')
     }
   }
 
   const handleAuthSuccess = (user: User) => {
+    authVersion.current += 1
+    identity.current = user
     setCurrentUser(user)
+    setCurrentSessionId(null)
     setActiveView('catalogue')
+    setAuthError(null)
+    setAuthLoading(false)
   }
 
   const handleSelectConcept = async (conceptId: string) => {
+    const version = authVersion.current
     try {
       const newSession = await api.createSession(conceptId)
+      if (version !== authVersion.current) return
       setCurrentSessionId(newSession.id)
       setActiveView('session')
     } catch (err: unknown) {
@@ -176,6 +237,10 @@ export function App() {
 
       {/* Main Content Area — generous, unconstrained width */}
       <main className="app-main" id="main-content">
+        {authError && <div className="error-banner mb-4" role="alert">
+          <span>{authError}</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setAuthLoading(true); setAuthError(null); void checkAuthentication(true) }} disabled={authLoading}>Retry authentication</button>
+        </div>}
         {authLoading ? (
           <div className="auth-loading-state" role="status">
             <div className="loading-spinner" aria-hidden="true" />

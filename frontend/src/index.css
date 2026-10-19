@@ -2102,6 +2102,21 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   color: var(--text-body);
 }
 
+.question-part-list {
+  display: grid;
+  gap: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.question-part-card {
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.question-part-card p {
+  margin: 0.5rem 0 0;
+}
+
 .diagnostic-details-accordion {
   margin-top: var(--space-3);
   border-top: 1px solid var(--border-light);
@@ -2881,6 +2896,7 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
 
   /* Avoid page breaks inside discrete content cards and rows */
   .criterion-card-row,
+  .question-part-card,
   .concern-card,
   .summary-point-card,
   .personal-summary-card,

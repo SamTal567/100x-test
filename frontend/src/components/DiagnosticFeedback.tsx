@@ -1,6 +1,7 @@
 import React from 'react'
 import { evidenceLabels, groupCriteria } from '../lib/assessmentSummary'
 import { TrackedResourceLink } from './TrackedResourceLink'
+import { QuestionPartFeedback } from './QuestionPartFeedback'
 import type { ResourceOpening } from './TrackedResourceLink'
 import type { AttemptReport } from '../types'
 
@@ -60,6 +61,13 @@ export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
       </div>}
     </div>
 
+    {baseline.some(attempt => attempt.question_parts?.some(part => !part.supplementary)) && <div className="diagnostic-part-feedback">
+      {baseline.map((attempt, index) => <div key={attempt.id || index}>
+        <h4>Case {index + 1}</h4>
+        <QuestionPartFeedback attempt={attempt} />
+      </div>)}
+    </div>}
+
     <details className="diagnostic-details-accordion">
       <summary className="diagnostic-details-toggle">View diagnostic details (per-answer evidence)</summary>
       <div className="diagnostic-details-content mt-3">
@@ -71,7 +79,10 @@ export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
             <ul>{rows.map((criterion, index) => <li key={index} className="diagnostic-criterion-row">
               {criterion.case_number ? <span className="case-attribution-badge">Case {criterion.case_number}: </span> : null}
               <span className="diagnostic-criterion-name">{criterion.criterion}</span>
-              {criterion.evidence && <span className="criterion-evidence-inline"> — “{criterion.evidence}”</span>}
+              {criterion.demonstrated_explanation && <p><strong>What was correct:</strong> {criterion.demonstrated_explanation}</p>}
+              {criterion.explanation && <p><strong>Why this rating:</strong> {criterion.explanation}</p>}
+              {criterion.next_action && <p><strong>Next step:</strong> {criterion.next_action}</p>}
+              {criterion.evidence && !['not_addressed', 'technical_failure'].includes(criterion.rating || '') && criterion.issue_type !== 'technical_failure' && criterion.coverage !== 'unanswered' && <span className="criterion-evidence-inline"> — “{criterion.evidence}”</span>}
             </li>)}</ul>
           </div>)}
         </div>

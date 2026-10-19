@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { api } from '../api/client'
 import type { User } from '../types'
 
 interface AuthPageProps {
@@ -19,7 +20,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
     setLoading(true)
 
     try {
-      const { api } = await import('../api/client')
       if (mode === 'signup') {
         const res = await api.signup({
           email: email.trim(),

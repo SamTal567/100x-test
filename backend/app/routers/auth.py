@@ -4,6 +4,7 @@ Provides JWT-based authentication with password hashing and session migration.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from itsdangerous import BadData
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
@@ -17,14 +18,14 @@ from app.auth import (
 )
 from app.config import get_settings
 from app.db.database import get_db
-from app.db.models import Session as LearningSession, User
+from app.db.models import Attachment, Session as LearningSession, Transcription, User
 from app.schemas import AuthResponse, AuthStatus, UserLoginRequest, UserOut, UserRegisterRequest
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 
 def _claim_anonymous_sessions(db: Session, request: Request, user_id: str):
-    """Transfer any anonymous sessions created in the current browser session to the authenticated user."""
+    """Move sessions and their owned media in the caller's auth transaction."""
     cookie_value = request.cookies.get("cc_session")
     if not cookie_value:
         return
@@ -37,37 +38,40 @@ def _claim_anonymous_sessions(db: Session, request: Request, user_id: str):
     serializer = _get_serializer()
     try:
         anon_owner_id = serializer.loads(cookie_value)
-        if anon_owner_id and anon_owner_id != user_id:
-            db.execute(
-                update(LearningSession)
-                .where(LearningSession.owner_id == anon_owner_id)
-                .values(owner_id=user_id)
-            )
-            db.commit()
-    except Exception:
-        pass
+    except BadData:
+        return
+    if not isinstance(anon_owner_id, str) or not anon_owner_id or anon_owner_id == user_id:
+        return
+
+    session_ids = [row.id for row in db.query(LearningSession.id).filter_by(owner_id=anon_owner_id)]
+    if not session_ids:
+        return
+    for model in (Attachment, Transcription):
+        db.execute(
+            update(model)
+            .where(model.session_id.in_(session_ids), model.owner_id == anon_owner_id)
+            .values(owner_id=user_id)
+        )
+    db.execute(
+        update(LearningSession)
+        .where(LearningSession.id.in_(session_ids), LearningSession.owner_id == anon_owner_id)
+        .values(owner_id=user_id)
+    )
+
+
+def _auth_cookie_options():
+    return {
+        "path": "/",
+        "httponly": True,
+        "secure": get_settings().environment.strip().lower() in {"production", "prod"},
+        "samesite": "lax",
+    }
 
 
 def _set_auth_cookie(response: Response, token: str):
-    settings = get_settings()
-    is_prod = settings.environment.lower() in {"production", "prod"}
-    response.set_cookie(
-        key="cc_auth_token",
-        value=token,
-        httponly=True,
-        secure=is_prod,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,  # 30 days
-    )
-    # Also update cc_session to the user JWT so existing get_owner_id seamlessly sees it
-    response.set_cookie(
-        key="cc_session",
-        value=token,
-        httponly=True,
-        secure=is_prod,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
+    # Keep cc_session JWT compatibility for existing browsers.
+    for key in ("cc_auth_token", "cc_session"):
+        response.set_cookie(key=key, value=token, max_age=60 * 60 * 24 * 30, **_auth_cookie_options())
 
 
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
@@ -92,11 +96,14 @@ def signup(
         full_name=req.full_name.strip() if req.full_name else None,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.flush()
+        _claim_anonymous_sessions(db, request, user.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
-
-    # Claim any anonymous sessions created prior to registering
-    _claim_anonymous_sessions(db, request, user.id)
 
     token = create_access_token(user.id, user.email)
     _set_auth_cookie(response, token)
@@ -125,7 +132,12 @@ def login(
         )
 
     # Claim any anonymous sessions created before logging in
-    _claim_anonymous_sessions(db, request, user.id)
+    try:
+        _claim_anonymous_sessions(db, request, user.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     token = create_access_token(user.id, user.email)
     _set_auth_cookie(response, token)
@@ -140,8 +152,8 @@ def login(
 @router.post("/logout")
 def logout(response: Response):
     """Clear authentication cookies."""
-    response.delete_cookie(key="cc_auth_token")
-    response.delete_cookie(key="cc_session")
+    for key in ("cc_auth_token", "cc_session"):
+        response.delete_cookie(key=key, **_auth_cookie_options())
     return {"status": "logged_out"}
 
 

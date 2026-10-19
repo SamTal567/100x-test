@@ -111,11 +111,32 @@ class NormalizedProposal(tuple):
         return instance
 
 
+def normalize_coverage(value):
+    value = {"partially_answered": "partly_answered"}.get(value, value)
+    return value if value in {"answered", "partly_answered", "unanswered", "unclear"} else None
+
+
+def normalize_issue_type(value):
+    value = {"ambiguous_wording": "ambiguous_wording_or_interpretation"}.get(value, value)
+    return value if value in {"incorrect_claim", "missing_requested_part",
+        "ambiguous_wording_or_interpretation", "insufficient_evidence", "technical_failure"} else None
+
+
+def resolve_question_part(question_parts, criterion_name, proposed_id=None):
+    """Use the authored criterion mapping, never a provider-selected unrelated part."""
+    matching = [p for p in (question_parts or []) if isinstance(p, dict)
+        and criterion_name in (p.get("criteria_names", []) + p.get("criterion_ids", []))]
+    selected = next((p for p in matching if (p.get("id") or p.get("part_id")) == proposed_id), None)
+    if selected is None and len(matching) == 1:
+        selected = matching[0]
+    return selected
+
+
 def normalized_proposal(proposed, answer, result_status, summary="", question_parts=None, criterion_id=None):
     if proposed is None or result_status != "complete":
         msg = summary or "Assessment was unavailable or did not return this prepared criterion exactly once."
         return NormalizedProposal(
-            None, "technical_failure", msg,
+            None, "technical_failure", "",
             issue_type="technical_failure",
             explanation=msg,
             next_action="Request reassessment or consult the tutor for guidance."
@@ -125,29 +146,16 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
     met = getattr(proposed, "met", None)
     evidence = (getattr(proposed, "evidence", "") or "").strip()
     question_part_id = getattr(proposed, "question_part_id", None)
-    coverage = getattr(proposed, "coverage", None)
-    issue_type = getattr(proposed, "issue_type", None)
+    coverage = normalize_coverage(getattr(proposed, "coverage", None))
+    issue_type = normalize_issue_type(getattr(proposed, "issue_type", None))
     demonstrated_explanation = getattr(proposed, "demonstrated_explanation", None)
     explanation = getattr(proposed, "explanation", None)
     next_action = getattr(proposed, "next_action", None)
 
     # Validate / match question_part_id against question_parts
-    part_desc = None
-    if question_parts and isinstance(question_parts, list):
-        part_map = {(p.get("id") or p.get("part_id")): p for p in question_parts if isinstance(p, dict) and (p.get("id") or p.get("part_id"))}
-        if question_part_id and question_part_id in part_map:
-            part_desc = part_map[question_part_id].get("description")
-        else:
-            matching_parts = [
-                p for p in question_parts
-                if isinstance(p, dict) and criterion_id and (criterion_id in p.get("criterion_ids", []))
-            ]
-            if len(matching_parts) == 1:
-                question_part_id = matching_parts[0].get("id") or matching_parts[0].get("part_id")
-                part_desc = matching_parts[0].get("description")
-            else:
-                question_part_id = None
-                part_desc = None
+    part = resolve_question_part(question_parts, criterion_id, question_part_id)
+    question_part_id = (part.get("id") or part.get("part_id")) if part else None
+    part_desc = part.get("description") if part else None
 
     expected = {
         "demonstrated": True,
@@ -159,8 +167,7 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
 
     if rating not in expected or met is not expected[rating]:
         return NormalizedProposal(
-            None, "technical_failure",
-            "Provider returned an inconsistent rating and verdict; reviewer assessment is needed.",
+            None, "technical_failure", "",
             question_part_id=question_part_id,
             issue_type="technical_failure",
             explanation="Provider returned an inconsistent rating and verdict; reviewer assessment is needed.",
@@ -169,14 +176,14 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
 
     if rating == "technical_failure":
         return NormalizedProposal(
-            None, rating, evidence or "Provider could not assess this criterion.",
+            None, rating, "",
             question_part_id=question_part_id,
             issue_type="technical_failure",
             explanation=explanation or evidence or "Provider could not assess this criterion.",
             next_action=next_action or "Request reassessment or consult the tutor."
         )
 
-    if rating == "not_addressed" or issue_type == "missing_requested_part":
+    if rating == "not_addressed":
         missing_desc = part_desc or (f"address {criterion_id}" if criterion_id else "address this requirement")
         if not explanation or not explanation.strip().startswith("You did not answer"):
             explanation = f"You did not answer the part asking you to {missing_desc}."
@@ -184,37 +191,37 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
         return NormalizedProposal(
             False, "not_addressed", "",
             question_part_id=question_part_id,
-            coverage=coverage or "unanswered",
+            coverage="unanswered",
             issue_type="missing_requested_part",
-            demonstrated_explanation=demonstrated_explanation,
+            demonstrated_explanation=None,
             explanation=explanation,
             next_action=action
         )
 
-    if met is not None and (not evidence or evidence.casefold() not in answer.casefold()):
+    if (evidence and evidence.casefold() not in answer.casefold()) or (met is not None and not evidence):
         return NormalizedProposal(
             None, "ambiguous_needs_clarification",
-            "Assessment evidence could not be verified in the submitted answer.",
+            "",
             question_part_id=question_part_id,
             coverage="unclear",
             issue_type="insufficient_evidence",
-            demonstrated_explanation=demonstrated_explanation,
-            explanation=explanation or "Assessment evidence could not be verified in the submitted answer.",
-            next_action=next_action or "Clarify your answer with specific reasoning from the scenario."
+            demonstrated_explanation=None,
+            explanation="Assessment evidence could not be verified in the submitted answer.",
+            next_action="Clarify your answer with specific reasoning from the scenario."
         )
 
     if rating == "demonstrated":
-        cov = coverage or "answered"
+        cov = "answered"
         it = None
         exp = explanation or "Demonstrated accurate reasoning according to the prepared criteria."
         act = next_action or "Continue to apply this understanding."
     elif rating == "partially_demonstrated":
-        cov = coverage or "partly_answered"
-        it = issue_type if issue_type in ("incorrect_claim", "missing_requested_part", "ambiguous_wording_or_interpretation", "insufficient_evidence") else "incorrect_claim"
+        cov = "partly_answered"
+        it = issue_type if issue_type in ("incorrect_claim", "missing_requested_part", "ambiguous_wording_or_interpretation", "insufficient_evidence") else "insufficient_evidence"
         exp = explanation or "Your response partly answered this requirement but needs further development."
         act = next_action or "Clarify your reasoning and address the remaining parts."
     else:  # ambiguous_needs_clarification
-        cov = coverage or "unclear"
+        cov = "unclear"
         it = issue_type if issue_type in ("ambiguous_wording_or_interpretation", "insufficient_evidence") else "ambiguous_wording_or_interpretation"
         exp = explanation or "Your reasoning was ambiguous and needs clarification."
         act = next_action or "State clearly what you meant in your explanation."

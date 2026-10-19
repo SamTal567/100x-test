@@ -16,6 +16,7 @@ const BASE_URL =
   typeof window !== 'undefined' && window.location.hostname.endsWith('vercel.app')
     ? ''
     : (import.meta.env.VITE_API_BASE_URL || '')
+export const AUTH_REQUIRED_EVENT = 'cc:auth-required'
 
 export class ApiError extends Error {
   readonly status: number
@@ -40,6 +41,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   })
 
   if (!res.ok) {
+    if (res.status === 401 && /^\/v1\/(sessions|attachments)(?:\/|$)/.test(endpoint)
+      && (typeof localStorage === 'undefined' || localStorage.getItem('cc_auth_token') === token)) {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem('cc_auth_token')
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))
+    }
     let errorDetail = `Request failed: ${res.status} ${res.statusText}`
     try {
       const errorJson = await res.json()
@@ -96,24 +102,10 @@ export const api = {
     const formData = new FormData()
     formData.append('audio', audioBlob, filename)
 
-    const res = await fetch(`${BASE_URL}/v1/sessions/${sessionId}/transcriptions`, {
+    return request<TranscriptionResult>(`/v1/sessions/${sessionId}/transcriptions`, {
       method: 'POST',
-      credentials: 'include',
       body: formData,
     })
-
-    if (!res.ok) {
-      let errorDetail = `Transcription failed: ${res.status}`
-      try {
-        const errorJson = await res.json()
-        if (errorJson.detail) errorDetail = errorJson.detail
-      } catch {
-        // ignore
-      }
-      throw new Error(errorDetail)
-    }
-
-    return res.json() as Promise<TranscriptionResult>
   },
 
   async listReviewAssessments(reviewerKey: string): Promise<AssessmentReviewItem[]> {
@@ -172,10 +164,12 @@ export const api = {
   },
 
   async logout(): Promise<{ status: string }> {
-    if (typeof localStorage !== 'undefined') {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('cc_auth_token') : null
+    const result = await request<{ status: string }>('/v1/auth/logout', { method: 'POST' })
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('cc_auth_token') === token) {
       localStorage.removeItem('cc_auth_token')
     }
-    return request<{ status: string }>('/v1/auth/logout', { method: 'POST' })
+    return result
   },
 
   async getMe(): Promise<AuthStatus> {

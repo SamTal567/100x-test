@@ -70,6 +70,24 @@ COLUMNS_TO_ENSURE = {
 
 
 
+def protect_owned_user_table(conn) -> None:
+    """Protect the account table as its existing PostgreSQL owner only.
+
+    Supabase's management connection does not own this runtime-created table.
+    The backend owner keeps normal owner access; no public Data API role gets
+    a policy. SQLite and deployments owned by another role are left untouched.
+    """
+    if conn.dialect.name != "postgresql":
+        return
+    owns_table = conn.execute(text("""
+        SELECT tableowner = current_user FROM pg_tables
+        WHERE schemaname = 'public' AND tablename = 'users'
+    """)).scalar()
+    if owns_table:
+        conn.execute(text("REVOKE ALL ON TABLE public.users FROM PUBLIC, anon, authenticated"))
+        conn.execute(text("ALTER TABLE public.users ENABLE ROW LEVEL SECURITY"))
+
+
 def ensure_schema_columns(engine: Engine) -> None:
     """Check each table and add any newly introduced columns if missing."""
     inspector = inspect(engine)
@@ -97,3 +115,5 @@ def ensure_schema_columns(engine: Engine) -> None:
                             """))
                     except Exception as exc:
                         logger.warning("Could not add column %s to %s (permission or concurrent): %s", col_name, table_name, exc)
+
+        protect_owned_user_table(conn)

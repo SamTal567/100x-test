@@ -3,6 +3,7 @@ import { PresetDiagramView } from './PresetDiagramView'
 import { ClozeExerciseView } from './ClozeExerciseView'
 import { supportLabel } from '../lib/sessionDrafts'
 import { SessionTranscript } from './SessionTranscript'
+import { QuestionPartFeedback } from './QuestionPartFeedback'
 import type { AttemptReport, Message, SessionDetail, SessionReport, SkillComparison, SkillEvidence } from '../types'
 
 export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }> = ({ attempt, anchor = true }) => <div className="attempt-card card-flat" id={anchor ? `attempt-${attempt.id}` : undefined}>
@@ -18,6 +19,7 @@ export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }>
   {attempt.diagram_state && !attempt.diagram_preset && <p className="muted-note">An older diagram selection is saved, but its original preset is unavailable.</p>}
   {attempt.cloze_preset && <ClozeExerciseView cloze={attempt.cloze_preset} value={attempt.cloze_state as Record<string, string> | null} readOnly />}
   <p className="muted-note">Case version {attempt.case_version ?? 'not recorded'} · Rubric version {attempt.rubric_version ?? 'not recorded'}{attempt.processing_status && ` · Processing: ${attempt.processing_status.replaceAll('_', ' ')}`}</p>
+  <QuestionPartFeedback attempt={attempt} />
   <div className="criteria-table">{attempt.criteria.map((criterion, index) => <div key={`${criterion.criterion}-${index}`} className="criterion-card-row">
     <span className={`criterion-status-glyph ${criterion.met === true ? 'met' : criterion.met === false ? 'not-met' : 'unclear'}`} aria-label={criterion.met === true ? 'Demonstrated' : criterion.met === false ? 'Needs attention' : 'Uncertain'}>{criterion.met === true ? '✓' : criterion.met === false ? '!' : '?'}</span>
     <div className="criterion-details">
@@ -36,7 +38,7 @@ export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }>
       {criterion.demonstrated_explanation && <p className="criterion-demonstrated-text"><strong>Demonstrated:</strong> {criterion.demonstrated_explanation}</p>}
       {criterion.explanation && <p className="criterion-explanation-text"><strong>Explanation:</strong> {criterion.explanation}</p>}
       {criterion.next_action && <p className="criterion-next-action-text"><strong>Next action:</strong> {criterion.next_action}</p>}
-      {criterion.evidence && <p className="criterion-evidence-text">Evidence: {criterion.evidence}</p>}
+      {criterion.evidence && !['not_addressed', 'technical_failure'].includes(criterion.rating || '') && criterion.issue_type !== 'technical_failure' && criterion.coverage !== 'unanswered' && <p className="criterion-evidence-text">Evidence: {criterion.evidence}</p>}
       {criterion.reviewer_notes && <p className="criterion-reviewer-note">Reviewer: {criterion.reviewer_notes}</p>}
     </div>
   </div>)}</div>
@@ -138,6 +140,14 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
           <p>{summary.support_summary}</p>
         </div>}
       </div>
+    </section>}
+
+    {report.attempts.some(attempt => attempt.stage !== 'practice' && attempt.question_parts?.some(part => !part.supplementary)) && <section className="report-part-coverage card-flat mb-4" aria-label="Question-part coverage overview">
+      <h3 className="section-subtitle">Question-part coverage</h3>
+      {report.attempts.filter(attempt => attempt.stage !== 'practice' && attempt.question_parts?.some(part => !part.supplementary)).map((attempt, index) => <div key={attempt.id}>
+        <h4>{attempt.stage === 'apply' ? 'Fresh case' : attempt.stage === 'investigate' ? 'Revised reasoning' : `Baseline case ${index + 1}`}</h4>
+        <QuestionPartFeedback attempt={attempt} compact />
+      </div>)}
     </section>}
 
     {/* 3. Concern Cards */}

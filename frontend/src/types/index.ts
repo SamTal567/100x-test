@@ -70,6 +70,25 @@ export interface CasePrompt {
   rubric_version?: number
   diagram_preset?: PresetDiagram | null
   cloze_preset?: ClozePreset | null
+  question_parts?: QuestionPart[] | null
+}
+
+export interface QuestionPart {
+  id?: string
+  part_id?: string
+  description: string
+  supplementary?: boolean
+}
+
+export interface QuestionPartCoverage {
+  question_part_id: string
+  description?: string
+  coverage?: 'answered' | 'partly_answered' | 'partially_answered' | 'unanswered' | 'unclear'
+  issue_type?: string | null
+  demonstrated_explanation?: string | null
+  explanation?: string | null
+  next_action?: string | null
+  evidence?: string | null
 }
 
 export interface SessionListItem {
@@ -249,6 +268,8 @@ export interface AttemptReport {
   response_format?: string
   diagram_state?: Record<string, unknown> | null
   cloze_state?: Record<string, unknown> | null
+  question_parts?: QuestionPart[] | null
+  question_parts_coverage?: QuestionPartCoverage[] | null
   criteria: CriterionAssessment[]
   support_level: string
   score?: number | null

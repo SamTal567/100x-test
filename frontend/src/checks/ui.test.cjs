@@ -8,7 +8,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 // Use the installed compiler for small component regressions; no browser/test
 // dependency is required and no application database or provider is contacted.
 for (const extension of ['.ts', '.tsx']) require.extensions[extension] = (module, filename) => {
-  module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+  module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8').replace('import.meta.env.VITE_API_BASE_URL', 'undefined'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
   }).outputText, filename)
 }
@@ -23,6 +23,7 @@ const { SessionTranscript } = require('../components/SessionTranscript.tsx')
 const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
 const { HelpMenu } = require('../components/HelpMenu.tsx')
 const { AuthModal } = require('../components/AuthModal.tsx')
+const { AuthPage } = require('../pages/AuthPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
 
@@ -674,7 +675,6 @@ test('auth modal renders sign in and registration forms with accessible tablist'
 })
 
 test('auth page renders first-touch login and sign-up card with tabs and credentials form', () => {
-  const { AuthPage } = require('../pages/AuthPage.tsx')
   const html = render(AuthPage, { onAuthSuccess: () => {} })
   assert.match(html, /Sign In to Continue/)
   assert.match(html, /role="tablist"/)
@@ -685,5 +685,311 @@ test('auth page renders first-touch login and sign-up card with tabs and credent
   assert.match(html, /Password/)
   assert.match(html, /Sign In →/)
   assert.match(html, /Create one now/)
+})
+
+// Execute App's hooks and events without a browser or a real API. Child screens
+// stay unmounted; the real App decides which identity/session may reach them.
+function appHarness(api, entries = []) {
+  const Module = require('node:module')
+  const values = new Map(entries)
+  const listeners = new Map()
+  const oldStorage = global.localStorage
+  const oldWindow = global.window
+  global.localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+  global.window = {
+    addEventListener: (name, handler) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(handler) },
+    removeEventListener: (name, handler) => listeners.get(name)?.delete(handler),
+    dispatchEvent: event => { for (const handler of listeners.get(event.type) || []) handler(event) },
+  }
+  const slots = []
+  const pendingEffects = []
+  let cursor = 0
+  let dirty = true
+  let tree
+  const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
+  const hooks = {
+    useState(initial) { const i = cursor++; if (!slots[i]) slots[i] = { value: typeof initial === 'function' ? initial() : initial }; return [slots[i].value, value => { slots[i].value = typeof value === 'function' ? value(slots[i].value) : value; dirty = true }] },
+    useRef(initial) { const i = cursor++; if (!slots[i]) slots[i] = { current: initial }; return slots[i] },
+    useCallback(fn, deps) { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { deps, value: fn }; return slots[i].value },
+    useEffect(fn, deps) { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) { const previous = slots[i]; slots[i] = { deps }; pendingEffects.push(() => { previous?.cleanup?.(); slots[i].cleanup = fn() }) } },
+  }
+  const child = name => ({ [name]: function Screen() {} })
+  const filename = require.resolve('../App.tsx')
+  const compiled = new Module(filename, module)
+  compiled.filename = filename
+  compiled.paths = module.paths
+  compiled.require = id => id === 'react' ? hooks : id === './api/client' ? { api, AUTH_REQUIRED_EVENT: 'cc:auth-required' }
+    : id.endsWith('.css') ? {} : id.startsWith('./pages/') || id.startsWith('./components/') ? child(id.split('/').at(-1)) : require(id)
+  compiled._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText, filename)
+  const renderApp = () => { cursor = 0; dirty = false; tree = compiled.exports.App(); while (pendingEffects.length) pendingEffects.shift()() }
+  const find = predicate => {
+    const visit = node => { if (!node || typeof node !== 'object') return; if (predicate(node)) return node; for (const child of React.Children.toArray(node.props?.children)) { const found = visit(child); if (found) return found } }
+    return visit(tree)
+  }
+  return {
+    values, find,
+    event: event => global.window.dispatchEvent(event),
+    async flush() { for (let i = 0; i < 20; i++) { if (dirty) renderApp(); await new Promise(resolve => setImmediate(resolve)); if (!dirty) return } throw new Error('App did not settle') },
+    close() { for (const slot of slots) slot?.cleanup?.(); global.localStorage = oldStorage; global.window = oldWindow },
+  }
+}
+
+const userA = { id: 'account-a', email: 'a@example.test', full_name: 'Learner A' }
+const userB = { id: 'account-b', email: 'b@example.test', full_name: 'Learner B' }
+
+test('authenticated refresh restores the selected session after identity verification', async () => {
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user: userA }) }, [
+    ['cc_active_session_id', 'session-a'], ['cc_active_view', 'session'], ['cc_active_session_owner', userA.id],
+  ])
+  try {
+    await app.flush()
+    assert.equal(app.find(node => node.props?.sessionId === 'session-a')?.props.sessionId, 'session-a')
+    assert.equal(app.values.get('cc_active_session_id'), 'session-a')
+  } finally { app.close() }
+})
+
+test('a token change in another tab clears the previous account screen and session', async () => {
+  let user = userA
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user }) }, [
+    ['cc_auth_token', 'token-a'], ['cc_active_session_id', 'session-a'], ['cc_active_view', 'session'], ['cc_active_session_owner', userA.id],
+  ])
+  try {
+    await app.flush()
+    user = userB
+    app.values.set('cc_auth_token', 'token-b')
+    app.event({ type: 'storage', key: 'cc_auth_token', newValue: 'token-b' })
+    await app.flush()
+    assert.equal(app.find(node => node.props?.sessionId === 'session-a'), undefined)
+    assert.equal(app.find(node => node.props?.title === `Signed in as ${userB.email}`)?.props.title, `Signed in as ${userB.email}`)
+    assert.equal(app.find(node => node.props?.title === `Signed in as ${userA.email}`), undefined)
+  } finally { app.close() }
+})
+
+test('an expired session gates saved learner content and offers sign-in again', async () => {
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user: userA }) }, [
+    ['cc_active_session_id', 'session-a'], ['cc_active_view', 'session'], ['cc_active_session_owner', userA.id],
+  ])
+  try {
+    await app.flush()
+    app.event({ type: 'cc:auth-required' })
+    await app.flush()
+    assert.equal(app.find(node => node.props?.sessionId), undefined)
+    assert.ok(app.find(node => node.props?.onAuthSuccess))
+    assert.ok(app.find(node => node.props?.role === 'alert'))
+  } finally { app.close() }
+})
+
+test('failed sign-out preserves the authenticated screen and reports the failure', async () => {
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user: userA }), logout: async () => { throw new Error('Offline') } })
+  try {
+    await app.flush()
+    await assert.doesNotReject(app.find(node => node.props?.title === 'Sign out of your account').props.onClick())
+    await app.flush()
+    assert.ok(app.find(node => node.props?.title === `Signed in as ${userA.email}`))
+    assert.ok(app.find(node => node.props?.role === 'alert'))
+  } finally { app.close() }
+})
+
+function loadApiClient() {
+  const Module = require('node:module')
+  const filename = require.resolve('../api/client.ts')
+  const compiled = new Module(filename, module)
+  compiled.filename = filename
+  compiled.paths = module.paths
+  compiled._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8').replace('import.meta.env.VITE_API_BASE_URL', 'undefined'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, filename)
+  return compiled.exports
+}
+
+test('voice uploads carry the same bearer identity as ordinary API requests', async () => {
+  const previous = { fetch: global.fetch, localStorage: global.localStorage, window: global.window }
+  global.localStorage = { getItem: () => 'learner-token' }
+  global.window = { location: { hostname: 'example.vercel.app' } }
+  let uploaded
+  global.fetch = async (url, options) => { uploaded = { url, options }; return { ok: true, json: async () => ({ id: 'clip' }) } }
+  try {
+    await loadApiClient().api.uploadTranscription('session-a', new Blob(['fictional audio']))
+    assert.equal(uploaded.url, '/v1/sessions/session-a/transcriptions')
+    assert.equal(uploaded.options.headers?.Authorization, 'Bearer learner-token')
+    assert.equal(uploaded.options.credentials, 'include')
+  } finally { Object.assign(global, previous) }
+})
+
+test('API authentication failure signals reauthentication but a wrong password does not', async () => {
+  const previous = { fetch: global.fetch, localStorage: global.localStorage, window: global.window }
+  const events = []
+  const values = new Map([['cc_auth_token', 'expired-token']])
+  global.localStorage = { getItem: key => values.get(key), removeItem: key => values.delete(key) }
+  global.window = { location: { hostname: 'example.vercel.app' }, dispatchEvent: event => events.push(event.type) }
+  global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized', json: async () => ({ detail: 'Sign in required' }) })
+  try {
+    const { api } = loadApiClient()
+    await assert.rejects(api.getSession('session-a'), /Sign in required/)
+    assert.deepEqual(events, ['cc:auth-required'])
+    await assert.rejects(api.login({ email: 'a@example.test', password: 'wrong-password' }), /Sign in required/)
+    assert.equal(events.length, 1)
+  } finally { Object.assign(global, previous) }
+})
+
+test('diagnostic and report preserve required-part coverage, omissions and useful feedback', () => {
+  const attempt = { id: 'parts', stage: 'diagnostic', case_type: 'baseline', scenario_text: 'Explain saving and recovery.', answer_text: 'I save to a file.', support_level: 'independent', question_parts: [
+    { part_id: 'save', description: 'Explain saving the answer' }, { part_id: 'recover', description: 'Explain restart recovery' }, { part_id: 'read', description: 'Explain retrieval after restart' },
+  ], question_parts_coverage: [
+    { question_part_id: 'save', coverage: 'partly_answered', demonstrated_explanation: 'You identified a durable file.', explanation: 'The write timing is not explained.', next_action: 'Explain when the write completes.', evidence: 'I save to a file.' },
+    { question_part_id: 'recover', coverage: 'unanswered', issue_type: 'missing_requested_part', explanation: 'You did not answer the part asking about recovery.', next_action: 'Explain how startup retrieves the saved answer.', evidence: '' },
+  ], criteria: [{ criterion: 'Explains durable saving', rating: 'partially_demonstrated', met: false, status: 'provisional', question_part_id: 'save', demonstrated_explanation: 'The destination is durable.', explanation: 'Missing write timing.', next_action: 'State when the write is acknowledged.' }] }
+  for (const html of [render(DiagnosticFeedback, { attempts: [attempt] }), render(AttemptView, { attempt })]) {
+    for (const text of ['Explain saving the answer', 'Explain restart recovery', 'Explain retrieval after restart', 'Partly answered', 'Unanswered', 'Coverage unavailable', 'You identified a durable file.', 'The write timing is not explained.', 'Explain when the write completes.', 'You did not answer the part asking about recovery.']) assert.ok(html.includes(text), `Missing learner feedback: ${text}`)
+    assert.ok(html.includes('Missing write timing.'))
+    assert.ok(html.includes('State when the write is acknowledged.'))
+    assert.doesNotMatch(html, /“”|&quot;&quot;/)
+  }
+})
+
+test('report shows requested-part coverage before its collapsed evidence appendix', () => {
+  const report = { session_id: 'overview', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive', outcome_reason: 'Evidence is incomplete', gaps: [], interventions_used: [], assessment_status: 'provisional', attempts: [{
+    id: 'unanswered-part', stage: 'apply', case_type: 'transfer', scenario_text: 'Explain recovery.', answer_text: 'Storage persists.', support_level: 'independent', criteria: [],
+    question_parts: [{ part_id: 'recover', description: 'Explain recovering the answer after restart' }], question_parts_coverage: [{ question_part_id: 'recover', coverage: 'unanswered', issue_type: 'missing_requested_part', explanation: 'The restart part was omitted.', evidence: '' }],
+  }] }
+  const html = render(ReportView, { report })
+  const overview = html.indexOf('Explain recovering the answer after restart')
+  const appendix = html.indexOf('Detailed evidence &amp; appendix')
+  assert.ok(overview >= 0 && overview < appendix)
+  assert.ok(html.slice(0, appendix).includes('Unanswered'))
+})
+
+test('another account cannot restore a stored session selection from the previous account', async () => {
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user: userB }) }, [
+    ['cc_active_session_id', 'session-a'], ['cc_active_view', 'session'], ['cc_active_session_owner', userA.id],
+  ])
+  try {
+    await app.flush()
+    assert.equal(app.find(node => node.props?.sessionId), undefined)
+    assert.equal(app.values.has('cc_active_session_id'), false)
+  } finally { app.close() }
+})
+
+test('failed account verification after a token change does not reveal the previous account', async () => {
+  let offline = false
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => { if (offline) throw new Error('Offline'); return { authenticated: true, user: userA } } })
+  try {
+    await app.flush()
+    offline = true
+    app.event({ type: 'storage', key: 'cc_auth_token', newValue: 'token-b' })
+    await app.flush()
+    assert.equal(app.find(node => node.props?.title === `Signed in as ${userA.email}`), undefined)
+    assert.ok(app.find(node => node.props?.onAuthSuccess))
+    assert.ok(app.find(node => node.props?.role === 'alert'))
+  } finally { app.close() }
+})
+
+test('late session creation cannot reopen a previous account after sign-out', async () => {
+  let finishCreation
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user: userA }), createSession: () => new Promise(resolve => { finishCreation = resolve }), logout: async () => ({ status: 'logged_out' }) })
+  try {
+    await app.flush()
+    const creating = app.find(node => node.props?.onSelectConcept).props.onSelectConcept('concept')
+    await app.find(node => node.props?.title === 'Sign out of your account').props.onClick()
+    finishCreation({ id: 'old-account-session' })
+    await creating
+    await app.flush()
+    app.find(node => node.props?.onAuthSuccess).props.onAuthSuccess(userB)
+    await app.flush()
+    assert.equal(app.find(node => node.props?.sessionId), undefined)
+    assert.equal(app.values.has('cc_active_session_id'), false)
+  } finally { app.close() }
+})
+
+test('failed logout keeps its bearer token until server cookie clearing is confirmed', async () => {
+  const previous = { fetch: global.fetch, localStorage: global.localStorage, window: global.window }
+  const values = new Map([['cc_auth_token', 'learner-token']])
+  global.localStorage = { getItem: key => values.get(key), removeItem: key => values.delete(key) }
+  global.window = { location: { hostname: 'example.vercel.app' } }
+  global.fetch = async () => { throw new Error('Offline') }
+  try {
+    await assert.rejects(loadApiClient().api.logout(), /Offline/)
+    assert.equal(values.get('cc_auth_token'), 'learner-token')
+  } finally { Object.assign(global, previous) }
+})
+
+test('late unauthorized response does not erase a newer sign-in token', async () => {
+  const previous = { fetch: global.fetch, localStorage: global.localStorage, window: global.window }
+  const values = new Map([['cc_auth_token', 'old-token']])
+  const events = []
+  let finishRequest
+  global.localStorage = { getItem: key => values.get(key), removeItem: key => values.delete(key) }
+  global.window = { location: { hostname: 'example.vercel.app' }, dispatchEvent: event => events.push(event.type) }
+  global.fetch = () => new Promise(resolve => { finishRequest = resolve })
+  try {
+    const pending = loadApiClient().api.getSession('old-session')
+    values.set('cc_auth_token', 'new-token')
+    finishRequest({ ok: false, status: 401, statusText: 'Unauthorized', json: async () => ({ detail: 'Expired' }) })
+    await assert.rejects(pending, /Expired/)
+    assert.equal(values.get('cc_auth_token'), 'new-token')
+    assert.deepEqual(events, [])
+  } finally { Object.assign(global, previous) }
+})
+
+test('partly answered omissions keep the valid quoted reasoning while fully unanswered parts do not', () => {
+  const attempt = { id: 'partial-omission', stage: 'diagnostic', case_type: 'baseline', scenario_text: 'Explain persistence.', answer_text: 'It is in a file.', support_level: 'independent',
+    question_parts: [{ part_id: 'persistence', description: 'Explain saving and reloading' }],
+    question_parts_coverage: [{ question_part_id: 'persistence', coverage: 'partly_answered', issue_type: 'missing_requested_part', evidence: 'It is in a file.' }],
+    criteria: [{ criterion: 'Explains persistence', rating: 'partially_demonstrated', met: false, status: 'provisional', question_part_id: 'persistence', coverage: 'partly_answered', issue_type: 'missing_requested_part', evidence: 'It is in a file.' }],
+  }
+  const diagnostic = render(DiagnosticFeedback, { attempts: [attempt] })
+  const report = render(AttemptView, { attempt })
+  assert.match(diagnostic, /<blockquote>It is in a file\.<\/blockquote>/)
+  assert.match(diagnostic, /criterion-evidence-inline/)
+  assert.match(report, /criterion-evidence-text/)
+  const omitted = structuredClone(attempt)
+  omitted.question_parts_coverage[0].coverage = 'unanswered'
+  omitted.criteria[0].coverage = 'unanswered'
+  omitted.criteria[0].rating = 'not_addressed'
+  assert.doesNotMatch(render(DiagnosticFeedback, { attempts: [omitted] }), /<blockquote>|criterion-evidence-inline/)
+  assert.doesNotMatch(render(AttemptView, { attempt: omitted }), /<blockquote>|criterion-evidence-text/)
+})
+
+test('a delayed sign-out response cannot clear a newer account in another tab', async () => {
+  let user = userA
+  let finishLogout
+  const app = appHarness({ getHealth: async () => ({}), getMe: async () => ({ authenticated: true, user }), logout: () => new Promise(resolve => { finishLogout = resolve }) })
+  try {
+    await app.flush()
+    const signingOut = app.find(node => node.props?.title === 'Sign out of your account').props.onClick()
+    user = userB
+    app.event({ type: 'storage', key: 'cc_auth_token', newValue: 'token-b' })
+    await app.flush()
+    finishLogout({ status: 'logged_out' })
+    await signingOut
+    await app.flush()
+    assert.ok(app.find(node => node.props?.title === `Signed in as ${userB.email}`))
+  } finally { app.close() }
+})
+
+test('a delayed logout keeps a newer bearer token established while it was pending', async () => {
+  const previous = { fetch: global.fetch, localStorage: global.localStorage, window: global.window }
+  const values = new Map([['cc_auth_token', 'old-token']])
+  let finishRequest
+  global.localStorage = { getItem: key => values.get(key), removeItem: key => values.delete(key) }
+  global.window = { location: { hostname: 'example.vercel.app' } }
+  global.fetch = () => new Promise(resolve => { finishRequest = resolve })
+  try {
+    const pending = loadApiClient().api.logout()
+    values.set('cc_auth_token', 'new-token')
+    finishRequest({ ok: true, json: async () => ({ status: 'logged_out' }) })
+    await pending
+    assert.equal(values.get('cc_auth_token'), 'new-token')
+  } finally { Object.assign(global, previous) }
+})
+
+test('legacy provider failure details never render as learner quotations or criterion evidence', () => {
+  const attempt = { id: 'provider-failure', stage: 'diagnostic', case_type: 'baseline', scenario_text: 'Explain persistence.', answer_text: 'My saved answer.', support_level: 'independent',
+    question_parts: [{ part_id: 'save', description: 'Explain durable saving' }],
+    question_parts_coverage: [{ question_part_id: 'save', coverage: 'unclear', issue_type: 'technical_failure', evidence: 'Provider unavailable' }],
+    criteria: [{ criterion: 'Explains persistence', rating: 'technical_failure', met: null, status: 'provisional', evidence: 'Provider unavailable' }],
+  }
+  for (const html of [render(DiagnosticFeedback, { attempts: [attempt] }), render(AttemptView, { attempt })]) {
+    assert.doesNotMatch(html, /<blockquote>|criterion-evidence-inline|criterion-evidence-text/)
+    assert.ok(html.includes('Coverage unavailable'))
+  }
 })
 

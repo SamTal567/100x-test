@@ -992,6 +992,9 @@ for _case in STORAGE_PERSISTENCE_CASES:
         _criterion['acceptable_alternatives'] = [_alternative]
         _criterion['common_misconceptions'] = [_misconception]
         _criterion['follow_up_probes'] = [_probe]
+    for _part in _case['question_parts']:
+        _part['criteria_names'] = [c['criterion'] for c in _case['rubric']['criteria']
+            if c['skill_id'] in _part['skill_ids']]
 
 # Redis requires an explicit durability policy; a default cache is not enough.
 STORAGE_PERSISTENCE_CASES[3]['rubric']['reference_answer'] = (

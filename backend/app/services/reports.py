@@ -153,6 +153,8 @@ def build_report(db, session, include_history=True):
     expected_ids = session.baseline_prompt_ids or [c.id for c in db.query(CasePrompt).filter_by(
         concept_id=session.concept_id, stage="diagnostic", active=True).all()]
     baseline_done = {a.case_prompt_id for a in attempts if a.stage == "diagnostic"}
+    journey_completed = (session.stage in ("review", "completed") and bool(expected_ids)
+        and set(expected_ids) == baseline_done and any(a.stage == "apply" for a in attempts))
     full_criteria = True
     for attempt in attempts:
         if attempt.stage == "practice":
@@ -225,7 +227,11 @@ def build_report(db, session, include_history=True):
     )
 
     if not complete:
-        outcome, reason = "inconclusive", "The session is partial or some prepared criteria lack usable assessment evidence. Saved answers remain available for review."
+        outcome = "inconclusive"
+        reason = ("The learning journey was completed, but some prepared criteria lack usable assessment evidence."
+            if journey_completed else "The session ended before the complete independent case sequence was submitted."
+            if session.stage in ("review", "completed") else "The learning journey is still in progress.")
+        reason += " Saved answers remain available for review."
     elif transfer_unmet:
         outcome, reason = "gap_found", "Some tested criteria were not met on the unfamiliar case. Inspect the per-skill comparison to distinguish initial difficulties from unresolved unfamiliar-case reasoning. An omission or incorrect selection alone is not a confirmed misconception."
     elif concern_skills_not_rechecked:
@@ -406,13 +412,6 @@ def build_report(db, session, include_history=True):
         support_used_labels_rev = sorted({a.support_level for a in revision_attempts})
         revised_summary = f"Revised answer demonstrated {rev_count} of {rev_total} criteria ({', '.join(support_used_labels_rev).replace('_', ' ')})."
 
-    journey_completed = (
-        session.stage in ("review", "completed")
-        and bool(expected_ids)
-        and set(expected_ids) == baseline_done
-        and any(a.stage == "apply" for a in attempts)
-    )
-
     unresolved_items = []
     if transfer_unmet:
         unresolved_items.append(f"{len(transfer_unmet)} criterion/criteria unmet on unfamiliar case")
@@ -453,7 +452,7 @@ def build_report(db, session, include_history=True):
     demonstrated_parts = []
     if transfer_demonstrated:
         t_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ").capitalize() for c in transfer_demonstrated})
-        demonstrated_parts.append(f"Demonstrated {len(transfer_demonstrated)} prepared criteria independently on the unfamiliar case: {', '.join(t_labels)}.")
+        demonstrated_parts.append(f"Demonstrated {len(transfer_demonstrated)} prepared criteria {support_desc} on the unfamiliar case: {', '.join(t_labels)}.")
     elif any(c.get("met") is True for c in baseline_criteria):
         b_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ").capitalize() for c in baseline_criteria if c.get("met") is True})
         demonstrated_parts.append(f"Demonstrated initial reasoning on: {', '.join(b_labels)}.")
@@ -465,15 +464,23 @@ def build_report(db, session, include_history=True):
     crit_issues = []
     all_evaluated = baseline_criteria + transfer_criteria
     omissions = [c for c in all_evaluated if c.get("rating") == "not_addressed" or c.get("issue_type") == "missing_requested_part"]
-    incorrect_claims = [c for c in all_evaluated if c.get("issue_type") == "incorrect_claim" or (c.get("rating") == "partially_demonstrated" and c.get("met") is False)]
+    incorrect_claims = [c for c in all_evaluated if c.get("issue_type") == "incorrect_claim"]
+    incomplete_reasoning = [c for c in all_evaluated if c.get("rating") == "partially_demonstrated"
+        and c.get("issue_type") not in ("incorrect_claim", "missing_requested_part")]
     ambiguities = [c for c in all_evaluated if (c.get("rating") == "ambiguous_needs_clarification" or c.get("met") is None) and c.get("rating") != "technical_failure"]
     if omissions:
         crit_issues.append("Omissions: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in omissions})))
     if incorrect_claims:
         crit_issues.append("Incorrect reasoning: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in incorrect_claims})))
+    if incomplete_reasoning:
+        crit_issues.append("Incomplete reasoning: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in incomplete_reasoning})))
     if ambiguities:
         crit_issues.append("Ambiguous explanations: " + ", ".join(sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in ambiguities})))
-    personal_missing_or_incorrect = "; ".join(crit_issues) + "." if crit_issues else "No omissions, incorrect claims, or ambiguous explanations detected."
+    if has_technical_failure or transfer_missing or any(a.unavailable_criteria_count for a in baseline_attempts):
+        crit_issues.append("Some assessment evidence is unavailable; no learner error is inferred for those criteria")
+    personal_missing_or_incorrect = "; ".join(crit_issues) + "." if crit_issues else (
+        "No omissions, incorrect claims, or ambiguous explanations detected in available assessments."
+        if all_evaluated else "Assessment evidence is unavailable; omissions and incorrect claims cannot be determined.")
 
     # 3. changed_after_help: What changed after help (e.g. revision demonstrated criteria with tutor support vs completed independently).
     if revision_attempts:
@@ -489,9 +496,17 @@ def build_report(db, session, include_history=True):
 
     # 4. needs_independent_checking: What was demonstrated only with support, or skills not rechecked on fresh case, or remaining unmet transfer criteria.
     checking_items = []
+    if not transfer_attempts:
+        checking_items.append("Unfamiliar-case reasoning has not been submitted")
+    elif not transfer_is_independent:
+        checking_items.append("Independent unfamiliar-case evidence remains unestablished because support was used or is unknown")
+    if transfer_technical_failures or transfer_missing:
+        checking_items.append("Unfamiliar-case assessment is missing or unavailable and needs reassessment")
+    if transfer_ambiguous:
+        checking_items.append("Unfamiliar-case reasoning remains unclear and needs clarification")
     for s in revision_skills_met:
         transfer_s_met = any(c.get("skill_id") == s and c.get("met") is True for c in transfer_demonstrated)
-        if not transfer_s_met:
+        if not transfer_s_met or not transfer_is_independent:
             checking_items.append(f"{s.replace('_', ' ')} (demonstrated with support, needs independent recheck)")
     for s in concern_skills_not_rechecked:
         s_label = s.replace("_", " ")
@@ -507,11 +522,15 @@ def build_report(db, session, include_history=True):
     if transfer_unmet:
         unmet_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in transfer_unmet})
         personal_next_step = f"Practice applying {', '.join(unmet_labels)} in independent scenarios without assistance."
+    elif not transfer_attempts:
+        personal_next_step = "Complete an unfamiliar case independently before drawing a transfer conclusion."
+    elif transfer_missing or has_technical_failure:
+        personal_next_step = "Request reassessment for missing or unavailable criterion judgments."
+    elif not transfer_is_independent:
+        personal_next_step = "Complete a fresh unfamiliar case independently, with established support provenance."
     elif concern_skills_not_rechecked:
         unrechecked = sorted({s.replace("_", " ") for s in concern_skills_not_rechecked})
         personal_next_step = f"Complete a fresh case focusing on {', '.join(unrechecked)} to verify independent retention."
-    elif has_technical_failure:
-        personal_next_step = "Request reassessment for criteria that had technical failures."
     elif transfer_ambiguous:
         amb_labels = sorted({(c.get("skill_id") or c["criterion"]).replace("_", " ") for c in transfer_ambiguous})
         personal_next_step = f"Clarify your reasoning on {', '.join(amb_labels)} with explicit cause-and-effect explanations."
@@ -559,24 +578,28 @@ def build_report(db, session, include_history=True):
             qpart_obj = qpart_map.get(qpart_id) if qpart_id else None
             question_part_desc = (qpart_obj.get("description") if qpart_obj else None) or c.get("criterion")
 
-            is_omitted = (rating == "not_addressed" or c.get("issue_type") == "missing_requested_part")
-            learner_quote = "" if is_omitted else (c.get("evidence") or "")
+            is_omitted = (rating == "not_addressed" or c.get("coverage") == "unanswered")
+            quote = c.get("evidence") or ""
+            learner_quote = quote if not is_omitted and rating != "technical_failure" and quote.casefold() in a.answer_text.casefold() else ""
 
-            what_was_correct = c.get("demonstrated_explanation") or "No accurate reasoning identified for this requirement."
-            why_rating = c.get("explanation") or ("Omitted in the learner response." if is_omitted else "The response was incomplete or ambiguous.")
+            unavailable = rating == "technical_failure"
+            what_was_correct = ("Assessment unavailable; demonstrated reasoning could not be determined."
+                if unavailable else c.get("demonstrated_explanation") or "No specific demonstrated reasoning was recorded for this criterion.")
+            why_rating = ("The assessment could not be completed; no learner mistake is inferred."
+                if unavailable else c.get("explanation") or ("Omitted in the learner response." if is_omitted else "The response was incomplete or ambiguous."))
             next_act = c.get("next_action")
-            how_to_improve = next_act or (
+            how_to_improve = "Request reassessment of the saved answer." if unavailable else next_act or (
                 f"Explain how you would {question_part_desc.lower()}." if is_omitted
                 else f"State clearly what you meant regarding {c.get('criterion')}." if rating == "ambiguous_needs_clarification"
                 else f"Clarify your reasoning regarding {c.get('criterion')}."
             )
-            suggested_next_step = next_act or how_to_improve
+            suggested_next_step = how_to_improve if unavailable else next_act or how_to_improve
 
-            issue_type = c.get("issue_type") or (
+            issue_type = "technical_failure" if unavailable else c.get("issue_type") or (
                 "missing_requested_part" if is_omitted
                 else "ambiguous_wording_or_interpretation" if rating == "ambiguous_needs_clarification"
                 else "technical_failure" if rating == "technical_failure"
-                else "incorrect_claim"
+                else "insufficient_evidence"
             )
 
             concern_cards.append({
@@ -592,6 +615,8 @@ def build_report(db, session, include_history=True):
             })
 
     session_summary = {
+        "completion_reason": "journey_completed" if journey_completed else "ended_before_unfamiliar_submission"
+            if session.stage in ("review", "completed") else "in_progress",
         "unfamiliar_case_summary": unfamiliar_summary,
         "revised_reasoning_summary": revised_summary,
         "unresolved_summary": unresolved_summary,
