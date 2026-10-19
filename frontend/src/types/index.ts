@@ -191,6 +191,8 @@ export interface GapReport {
   probe_text?: string | null
   status: string
   source_attempt_id?: string | null
+  addressed_by_attempt_id?: string | null
+  addressed_stage?: string | null
 }
 
 export interface CriterionAssessment {
@@ -201,6 +203,8 @@ export interface CriterionAssessment {
   evidence?: string
   reviewer_notes?: string
   status: 'provisional' | 'reviewed' | 'corrected'
+  unprompted?: boolean | null
+  unprompted_note?: string | null
 }
 
 export interface AttemptReport {
@@ -253,7 +257,7 @@ export interface SessionReport {
   session_id: string
   concept_title: string
   stage: string
-  outcome: 'gap_found' | 'no_gap' | 'inconclusive'
+  outcome: 'gap_found' | 'no_gap' | 'inconclusive' | 'criteria_demonstrated'
   gaps: GapReport[]
   attempts: AttemptReport[]
   interventions_used: { id?: string; type: string; title: string | null; status?: string; opened: boolean; completed: boolean; created_at?: string; url?: string; resource_id?: string }[]
@@ -261,6 +265,12 @@ export interface SessionReport {
   previous_sessions?: { session_id: string; created_at: string; outcome: string; skill_comparisons: SkillComparison[] }[]
   assessment_status: 'provisional' | 'reviewed'
   outcome_reason: string
+  session_summary?: {
+    unfamiliar_case_summary: string
+    revised_reasoning_summary: string
+    unresolved_summary: string
+    support_summary: string
+  }
   initial_score?: number | null
   final_score?: number | null
   score_change?: number | null

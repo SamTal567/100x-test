@@ -1,4 +1,4 @@
-"""Evidence/report and teaching regressions: disposable records, no provider calls."""
+﻿"""Evidence/report and teaching regressions: disposable records, no provider calls."""
 import json
 from copy import deepcopy
 from types import SimpleNamespace
@@ -8,7 +8,7 @@ import pytest
 from test_learning_loop import loop, PreparedProvider
 from app.adapters.openai_adapter import OpenAIAdapter
 from app.config import Settings
-from app.db.models import Attempt, Concept, CriterionAssessment, Intervention
+from app.db.models import Attempt, Concept, CriterionAssessment, Gap, Intervention
 from app.resources import RESOURCE_VERSION
 from app.schemas import TurnRequest
 
@@ -231,3 +231,71 @@ async def test_practice_tutor_does_not_misattribute_baseline_assessments(loop):
     assert context["source_attempt"]["attempt_id"] == source.id
     assert context["source_attempt"]["case_id"] == cases[0].id
     assert context["source_attempt"]["assessments"][0]["criterion"] == "Explains memory lifetime"
+
+
+@pytest.mark.asyncio
+async def test_resolved_shortcomings_give_criteria_demonstrated_and_accurate_headline(loop):
+    db, _, service, session, send, baseline, _, _ = loop
+    await baseline()
+    # Baseline has an initial shortcoming
+    ca = db.query(CriterionAssessment).join(Attempt).filter(
+        Attempt.session_id == session.id,
+        Attempt.stage == "diagnostic",
+        CriterionAssessment.skill_id == "memory_lifetime"
+    ).first()
+    ca.met = False
+    ca.rating = "partially_demonstrated"
+    gap_record = db.query(Gap).filter_by(session_id=session.id).first()
+    if gap_record:
+        gap_record.description = "Uncertainty about memory lifetime"
+    db.commit()
+
+    # Learner asks for hint and revises answer
+    await send(action="request_hint", text="I need a hint")
+    await send(action="submit_answer", text="Revised explanation with storage durability and memory lifetime explained.")
+    rev_attempt = db.query(Attempt).filter_by(session_id=session.id, stage="investigate").first()
+    for r_ca in rev_attempt.criterion_assessments:
+        r_ca.met = True
+        r_ca.rating = "demonstrated"
+    db.commit()
+
+    # Move to unfamiliar apply case
+    await send(action="submit_answer", text="Fresh case application demonstrating storage mechanisms.")
+    apply_attempt = db.query(Attempt).filter_by(session_id=session.id, stage="apply").first()
+    for a_ca in apply_attempt.criterion_assessments:
+        a_ca.met = True
+        a_ca.rating = "demonstrated"
+    db.commit()
+
+    report = service.generate_report(session)
+    assert report.outcome == "criteria_demonstrated"
+    assert "unfamiliar-case answer demonstrated all" in report.outcome_reason.lower()
+    assert "revised answer also addressed" in report.outcome_reason.lower()
+    # Check that historical gap is marked as addressed by later evidence
+    if report.gaps:
+        gap = report.gaps[0]
+        assert gap.addressed_by_attempt_id is not None
+        assert "revised" in gap.addressed_stage.lower() or "unfamiliar" in gap.addressed_stage.lower()
+    # Check session_summary structure
+    assert report.session_summary is not None
+    assert "demonstrated" in report.session_summary["unfamiliar_case_summary"].lower()
+
+
+@pytest.mark.asyncio
+async def test_unprompted_criterion_is_flagged_without_altering_snapshots(loop):
+    db, _, service, session, send, baseline, _, cases = loop
+    # Configure case prompt with scenario not mentioning key revocation
+    cases[0].scenario_text = "Who can recover the key and draw or describe a request path that keeps this secret backend-only?"
+    cases[0].rubric.criteria = [
+        {"criterion": "Explains proxy path", "skill_id": "proxy_isolation"},
+        {"criterion": "Revokes exposed keys immediately", "skill_id": "secret_lifecycle", "applicability": "unprompted"}
+    ]
+    db.commit()
+    await baseline()
+    report = service.generate_report(session)
+    # Find the criterion detail in the diagnostic attempt
+    diag_attempt = next(a for a in report.attempts if a.stage == "diagnostic")
+    unprompted_crit = next((c for c in diag_attempt.criteria if c.get("skill_id") == "secret_lifecycle"), None)
+    assert unprompted_crit is not None
+    assert unprompted_crit.get("unprompted") is True
+    assert "did not explicitly ask" in (unprompted_crit.get("unprompted_note") or "").lower()

@@ -1,4 +1,4 @@
-const assert = require('node:assert/strict')
+﻿const assert = require('node:assert/strict')
 const test = require('node:test')
 const fs = require('node:fs')
 const ts = require('typescript')
@@ -21,6 +21,7 @@ const { ReportView, AttemptView } = require('../components/ReportView.tsx')
 const { StageProgressBar } = require('../components/StageProgressBar.tsx')
 const { SessionTranscript } = require('../components/SessionTranscript.tsx')
 const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
+const { HelpMenu } = require('../components/HelpMenu.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
 test('confirmed dictation appends to typed text and keeps all accepted clip references after reload', () => {
@@ -253,4 +254,408 @@ test('report body and heading theme tokens meet normal-text contrast on both sur
       assert.ok((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5, `${foreground} against ${background} needs readable contrast`)
     }
   }
+})
+
+test('compact diagnostic feedback displays summary findings, next tutor question, and collapsible details with per-answer distinction', () => {
+  const attempts = [
+    {
+      id: 'diag-1',
+      stage: 'diagnostic',
+      case_type: 'baseline',
+      scenario_text: 'Scenario 1',
+      answer_text: 'Answer 1',
+      criteria: [
+        { criterion: 'Explains process memory', rating: 'demonstrated', met: true },
+        { criterion: 'Explains disk persistence', rating: 'partially_demonstrated', met: false },
+      ],
+    },
+    {
+      id: 'diag-2',
+      stage: 'diagnostic',
+      case_type: 'baseline',
+      scenario_text: 'Scenario 2',
+      answer_text: 'Answer 2',
+      criteria: [
+        { criterion: 'Explains disk persistence', rating: 'ambiguous_needs_clarification', met: null },
+      ],
+    },
+  ]
+  const html = render(DiagnosticFeedback, {
+    attempts,
+    nextQuestion: 'What changes when the server restarts?',
+  })
+  // Plain language summary
+  assert.match(html, /What your diagnostic answers showed/)
+  assert.match(html, /Explains process memory/)
+  assert.match(html, /Explains disk persistence/)
+  assert.match(html, /Next tutor question/)
+  assert.match(html, /What changes when the server restarts\?/)
+  // Per-answer evidence preserved in secondary accordion
+  assert.match(html, /View diagnostic details \(per-answer evidence\)/)
+  assert.match(html, /Partially demonstrated \(1\)/)
+  assert.match(html, /Needs clarification \(1\)/)
+})
+
+test('help menu provides accessible controls without cluttering the main conversation', () => {
+  const html = render(HelpMenu, {
+    canTeaching: true,
+    canPractice: true,
+    canResource: true,
+    canClarify: true,
+    canCorrectAi: true,
+    disabled: false,
+    onSelect: () => {},
+  })
+  assert.match(html, /More help ▾/)
+  assert.match(html, /aria-haspopup="true"/)
+  assert.match(html, /aria-expanded="false"/)
+})
+
+test('report view structures findings in order A (session summary), B (skill comparison), and C (detailed evidence), supporting print modes', () => {
+  const report = {
+    session_id: 'report-test-1',
+    concept_title: 'Storage Persistence',
+    stage: 'completed',
+    outcome: 'criteria_demonstrated',
+    outcome_reason: 'Your unfamiliar-case answer demonstrated all three prepared criteria. Your revised answer also addressed the earlier uncertainty about exposed keys. AI assessments remain provisional.',
+    assessment_status: 'provisional',
+    gaps: [
+      {
+        id: 'gap-1',
+        description: 'Possible storage uncertainty',
+        evidence_quote: 'Variables vanish',
+        probe_text: 'What survives?',
+        status: 'identified',
+        source_attempt_id: 'att-1',
+        addressed_by_attempt_id: 'att-rev',
+        addressed_stage: 'Revised explanation',
+      },
+    ],
+    attempts: [
+      {
+        id: 'att-1',
+        stage: 'diagnostic',
+        case_type: 'baseline',
+        scenario_text: 'Baseline case 1',
+        answer_text: 'Original answer',
+        support_level: 'independent',
+        criteria: [
+          {
+            criterion: 'Key revocation',
+            skill_id: 'secret_lifecycle',
+            rating: 'partially_demonstrated',
+            met: false,
+            unprompted: true,
+            unprompted_note: 'The scenario did not explicitly ask how to handle key revocation, replacement, or downloaded copies.',
+          },
+        ],
+      },
+    ],
+    interventions_used: [
+      { id: 'i-1', type: 'hint', title: 'Conceptual clue', opened: true, completed: true },
+    ],
+    skill_comparisons: [
+      {
+        skill_id: 'secret_lifecycle',
+        label: 'Secret lifecycle',
+        baseline: [{ attempt_id: 'att-1', criterion: 'Key revocation', rating: 'partially_demonstrated', met: false, support_level: 'independent' }],
+        revision: [],
+        transfer: [],
+        change_summary: 'Baseline noted.',
+      },
+    ],
+    session_summary: {
+      unfamiliar_case_summary: 'Demonstrated all criteria independently on the unfamiliar case.',
+      revised_reasoning_summary: 'Revised answer demonstrated key mechanisms after hint.',
+      unresolved_summary: 'None on tested cases; AI assessments remain provisional.',
+      support_summary: '1 hint',
+    },
+    stage_summaries: [
+      { stage: 'baseline', status: 'assessed', met_count: 0, total_count: 1, percentage: 0, support_levels: ['independent'] },
+      { stage: 'revision', status: 'not_assessed', met_count: 0, total_count: 0, percentage: null, support_levels: [] },
+      { stage: 'transfer', status: 'assessed', met_count: 1, total_count: 1, percentage: 100, support_levels: ['independent'] },
+    ],
+  }
+  const html = render(ReportView, { report, onBack: () => {} })
+
+  // Verify Part A: Session Summary
+  assert.match(html, /Session overview/)
+  assert.match(html, /Demonstrated all criteria independently/)
+  assert.match(html, /Your unfamiliar-case answer demonstrated all three prepared criteria/)
+
+  // Verify Part B: Compact Skill Comparison
+  assert.match(html, /Matched skills across cases/)
+  assert.match(html, /Secret lifecycle/)
+
+  // Verify Part C: Detailed Evidence & Appendix
+  assert.match(html, /Detailed evidence &amp; appendix/)
+  assert.match(html, /print-appendix/)
+
+  // Verify Print Mode Selector
+  assert.match(html, /Print \/ Export options/)
+  assert.match(html, /Compact summary/)
+  assert.doesNotMatch(html, /Compact summary \(1–2 pages\)/)
+  assert.match(html, /Full report with appendix/)
+
+  // Verify Unprompted criterion flag and addressed gap badge
+  assert.match(html, /Not asked in prompt/)
+  assert.match(html, /Addressed in later evidence/)
+  assert.match(html, /Revised explanation/)
+})
+
+test('diagnostic feedback attributes criteria to specific cases (Case 1, Case 2)', () => {
+  const attempts = [
+    {
+      id: 'att-case1',
+      stage: 'diagnostic',
+      case_snapshot: {
+        id: 'c1',
+        case_type: 'baseline_1',
+        scenario_text: 'Scenario for case 1',
+        rubric: {
+          criteria: [
+            { id: 'crit-1', skill: 'secret_lifecycle', label: 'Revoke key', prompt_quoted_text: 'Revocation' },
+          ],
+        },
+      },
+      criterion_assessments: [
+        { id: 'ca-1', criterion_id: 'crit-1', met: true, rating: 'demonstrated', evidence_quote: 'Found in case 1 answer' },
+      ],
+    },
+    {
+      id: 'att-case2',
+      stage: 'diagnostic',
+      case_snapshot: {
+        id: 'c2',
+        case_type: 'baseline_2',
+        scenario_text: 'Scenario for case 2',
+        rubric: {
+          criteria: [
+            { id: 'crit-2', skill: 'blast_radius', label: 'Contain scope', prompt_quoted_text: 'Containment' },
+          ],
+        },
+      },
+      criterion_assessments: [
+        { id: 'ca-2', criterion_id: 'crit-2', met: false, rating: 'partially_demonstrated', evidence_quote: 'Found in case 2 answer' },
+      ],
+    },
+  ]
+
+  const html = render(DiagnosticFeedback, {
+    attempts,
+    conceptSlug: 'security',
+    conceptTitle: 'Security Foundations',
+    nextQuestion: 'What steps would you take next?',
+  })
+
+  // Verify Case attribution badges
+  assert.match(html, /Case 1/)
+  assert.match(html, /Case 2/)
+  assert.match(html, /Revoke key/)
+  assert.match(html, /Contain scope/)
+  assert.match(html, /Found in case 1 answer/)
+  assert.match(html, /Found in case 2 answer/)
+})
+
+test('report view embeds session transcript in print appendix and marks it hidden in summary mode', () => {
+  const report = {
+    session_id: 's-print',
+    concept_slug: 'security',
+    concept_title: 'Security Foundations',
+    attempts: [],
+    interventions_used: [],
+    skill_comparisons: [],
+    session_summary: {
+      unfamiliar_case_summary: '',
+      revised_reasoning_summary: '',
+      unresolved_summary: '',
+      support_summary: '',
+    },
+    stage_summaries: [],
+  }
+  const messages = [
+    { id: 'm-1', role: 'user', content: 'My first response', stage: 'diagnostic', created_at: '2026-10-19T10:00:00Z' },
+    { id: 'm-2', role: 'tutor', content: 'What about rotation?', stage: 'investigate', created_at: '2026-10-19T10:01:00Z' },
+  ]
+
+  const html = render(ReportView, { report, messages, onBack: () => {} })
+
+  // Verify print-appendix and print-hide-in-summary are attached
+  assert.match(html, /print-appendix/)
+  assert.match(html, /print-hide-in-summary/)
+  assert.match(html, /My first response/)
+  assert.match(html, /What about rotation\?/)
+})
+
+function captureButtons(Component, props) {
+  const jsxRuntime = require('react/jsx-runtime')
+  const buttons = []
+  const origJsx = jsxRuntime.jsx
+  jsxRuntime.jsx = function(type, p, _key) {
+    if (type === 'button' && p && p.onClick) buttons.push({ props: p, onClick: p.onClick })
+    return origJsx.apply(this, arguments)
+  }
+  try {
+    renderToStaticMarkup(React.createElement(Component, props))
+  } finally {
+    jsxRuntime.jsx = origJsx
+  }
+  return buttons
+}
+
+test('composed guide links across diagnostic feedback, chat messages, and help menu open exactly 1 tab, 1 save event, and 1 navigation', async () => {
+  const { openTrackedResource } = require('../lib/trackedResources.ts')
+  const events = []
+  const tab = { opener: {}, location: { replace: url => events.push(['navigate', url]) }, close: () => events.push(['close']) }
+  const host = { open: () => { events.push(['blank']); return tab }, location: { assign: url => events.push(['fallback', url]) } }
+  global.window = host
+
+  const confirmResourceOpening = async (url) => {
+    events.push(['save', url])
+    return true
+  }
+  const openConceptGuide = async (url) => {
+    return openTrackedResource(url, () => confirmResourceOpening(url), host)
+  }
+
+  // 1. DiagnosticFeedback reference-guide button
+  events.length = 0
+  const diagButtons = captureButtons(DiagnosticFeedback, {
+    attempts: [{ stage: 'diagnostic', criteria: [{ criterion: 'Storage', rating: 'demonstrated', met: true }] }],
+    conceptSlug: 'storage-persistence',
+    conceptTitle: 'Storage',
+    onOpenResource: confirmResourceOpening,
+  })
+  assert.equal(diagButtons.length, 1)
+  await diagButtons[0].onClick()
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+  ])
+
+  // 2. Guide link in tutor message (SessionTranscript)
+  events.length = 0
+  const transcriptButtons = captureButtons(SessionTranscript, {
+    stage: 'investigate',
+    messages: [{ id: 'tutor-msg-1', role: 'tutor', content: 'Review the [Storage Guide](/v1/resources/storage-persistence)' }],
+    onOpenResource: confirmResourceOpening,
+  })
+  assert.equal(transcriptButtons.length, 1)
+  await transcriptButtons[0].onClick()
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+  ])
+
+  // 3. More help -> Open concept guide (HelpMenu direct caller)
+  events.length = 0
+  const guideSuccess = await openConceptGuide('/v1/resources/storage-persistence')
+  assert.equal(guideSuccess, true)
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+  ])
+})
+
+test('guide opening failure prevents navigation and closes reserved tab across all entry points', async () => {
+  const { openTrackedResource } = require('../lib/trackedResources.ts')
+  const events = []
+  const tab = { opener: {}, location: { replace: url => events.push(['navigate', url]) }, close: () => events.push(['close']) }
+  const host = { open: () => { events.push(['blank']); return tab }, location: { assign: url => events.push(['fallback', url]) } }
+  global.window = host
+
+  const failingConfirm = async (url) => {
+    events.push(['save', url])
+    return false
+  }
+  const openConceptGuide = async (url) => {
+    return openTrackedResource(url, () => failingConfirm(url), host)
+  }
+
+  // 1. DiagnosticFeedback fails to save
+  events.length = 0
+  const diagButtons = captureButtons(DiagnosticFeedback, {
+    attempts: [{ stage: 'diagnostic', criteria: [{ criterion: 'Storage', rating: 'demonstrated', met: true }] }],
+    conceptSlug: 'storage-persistence',
+    onOpenResource: failingConfirm,
+  })
+  await diagButtons[0].onClick()
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['close'],
+  ])
+
+  // 2. SessionTranscript fails to save
+  events.length = 0
+  const transcriptButtons = captureButtons(SessionTranscript, {
+    stage: 'investigate',
+    messages: [{ id: 'tutor-msg-2', role: 'tutor', content: 'Review the [Storage Guide](/v1/resources/storage-persistence)' }],
+    onOpenResource: failingConfirm,
+  })
+  await transcriptButtons[0].onClick()
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['close'],
+  ])
+
+  // 3. Direct HelpMenu openConceptGuide fails to save
+  events.length = 0
+  const result = await openConceptGuide('/v1/resources/storage-persistence')
+  assert.equal(result, false)
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['close'],
+  ])
+})
+
+test('regression: double-wrapping openTrackedResource reproduces double tabs and is prevented by confirmResourceOpening', async () => {
+  const { openTrackedResource } = require('../lib/trackedResources.ts')
+  const events = []
+  const tab = { opener: {}, location: { replace: url => events.push(['navigate', url]) }, close: () => events.push(['close']) }
+  const host = { open: () => { events.push(['blank']); return tab }, location: { assign: url => events.push(['fallback', url]) } }
+  global.window = host
+
+  // Buggy implementation: onOpenResource called openTrackedResource, creating a nested tab
+  const buggyNestedOpener = async (url) => {
+    return openTrackedResource(url, async () => { events.push(['save', url]); return true }, host)
+  }
+  events.length = 0
+  const buggyButtons = captureButtons(DiagnosticFeedback, {
+    attempts: [{ stage: 'diagnostic', criteria: [{ criterion: 'Storage', rating: 'demonstrated', met: true }] }],
+    conceptSlug: 'storage-persistence',
+    onOpenResource: buggyNestedOpener,
+  })
+  await buggyButtons[0].onClick()
+  // Buggy nested call produced 2 blank tabs, 1 save, 2 navigations
+  assert.deepEqual(events, [
+    ['blank'],
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+  ])
+
+  // Fixed implementation: onOpenResource is confirmResourceOpening, producing exactly 1 tab and 1 navigation
+  events.length = 0
+  const fixedConfirm = async (url) => {
+    events.push(['save', url])
+    return true
+  }
+  const fixedButtons = captureButtons(DiagnosticFeedback, {
+    attempts: [{ stage: 'diagnostic', criteria: [{ criterion: 'Storage', rating: 'demonstrated', met: true }] }],
+    conceptSlug: 'storage-persistence',
+    onOpenResource: fixedConfirm,
+  })
+  await fixedButtons[0].onClick()
+  assert.deepEqual(events, [
+    ['blank'],
+    ['save', '/v1/resources/storage-persistence'],
+    ['navigate', '/v1/resources/storage-persistence'],
+  ])
 })

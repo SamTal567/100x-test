@@ -8,6 +8,7 @@ interface DiagnosticFeedbackProps {
   attempts: AttemptReport[]
   conceptSlug?: string
   conceptTitle?: string
+  nextQuestion?: string
   onScrollToChat?: () => void
   onRetryAssessment?: () => void
   disabled?: boolean
@@ -15,31 +16,72 @@ interface DiagnosticFeedbackProps {
 }
 
 export const DiagnosticFeedback: React.FC<DiagnosticFeedbackProps> = ({
-  attempts, conceptSlug, conceptTitle, onScrollToChat, onRetryAssessment, disabled, onOpenResource,
+  attempts, conceptSlug, conceptTitle, nextQuestion, onRetryAssessment, disabled, onOpenResource,
 }) => {
   const baseline = attempts.filter(a => a.stage === 'diagnostic')
   if (!baseline.length) return null
   const groups = groupCriteria(baseline)
-  return <section className="diagnostic-feedback-wrapper mb-4" aria-label="Baseline feedback and optional guide">
-    <div className="card mb-3">
-      <h3>Baseline evidence</h3>
-      <p className="muted-note">These judgments describe your submitted answers. AI judgments remain provisional until human review. An omission needs a follow-up before it is treated as a misconception.</p>
-      <div className="comparison-columns">
-        {Object.entries(groups).filter(([, rows]) => rows.length).map(([rating, rows]) => <div className="card-flat" key={rating}>
-          <h4>{evidenceLabels[rating as keyof typeof evidenceLabels]} ({rows.length})</h4>
-          {rating === 'technical_failure' && <p className="muted-note">Processing did not provide a usable judgment. This is not evidence of a wrong answer.</p>}
-          <ul>{rows.map((criterion, index) => <li key={index}>{criterion.criterion}</li>)}</ul>
-        </div>)}
-      </div>
-      {groups.technical_failure.length > 0 && onRetryAssessment && <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={onRetryAssessment}>Retry unavailable assessments</button>}
+
+  const demonstratedNames = [...new Set(groups.demonstrated.map(c => c.criterion))]
+  const clarificationNames = [
+    ...new Set([
+      ...groups.ambiguous_needs_clarification.map(c => c.criterion),
+      ...groups.partially_demonstrated.map(c => c.criterion),
+      ...groups.not_addressed.map(c => c.criterion),
+    ]),
+  ]
+  const technicalFailures = groups.technical_failure
+
+  return <section className="diagnostic-summary-card card mb-4" aria-label="Diagnostic summary">
+    <div className="diagnostic-summary-header">
+      <h3 className="diagnostic-summary-title">What your diagnostic answers showed</h3>
+      <span className="badge badge-provisional">Provisional baseline</span>
     </div>
-    {conceptSlug && <div className="card recovery-card mb-3">
-      <h4>{conceptTitle || 'Concept'} reference guide</h4>
-      <p className="muted-note">Reading is optional. You can answer the tutor’s follow-up first. Reading a lesson is support, and opening a guide does not prove learning.</p>
-      <div className="action-wrap">
-        <TrackedResourceLink url={`/v1/resources/${conceptSlug}`} onOpenResource={onOpenResource} disabled={disabled}>Open Study Guide</TrackedResourceLink>
-        <button type="button" className="btn btn-primary btn-sm" onClick={onScrollToChat}>Continue to AI Chat ↓</button>
+
+    <div className="diagnostic-summary-body">
+      {demonstratedNames.length > 0 && <div className="diagnostic-summary-item">
+        <span className="diagnostic-item-badge badge-demonstrated">✓ Demonstrated</span>
+        <p className="diagnostic-item-text">{demonstratedNames.join(' · ')}</p>
+      </div>}
+
+      {clarificationNames.length > 0 && <div className="diagnostic-summary-item">
+        <span className="diagnostic-item-badge badge-clarification">? Needs clarification</span>
+        <p className="diagnostic-item-text">{clarificationNames.join(' · ')}</p>
+      </div>}
+
+      {nextQuestion && <div className="diagnostic-summary-item next-focus-item">
+        <span className="diagnostic-item-badge badge-next">Next tutor question</span>
+        <p className="diagnostic-item-text">{nextQuestion}</p>
+      </div>}
+
+      {technicalFailures.length > 0 && <div className="diagnostic-summary-item failure-item">
+        <span className="diagnostic-item-badge badge-failure">Assessment notice</span>
+        <p className="diagnostic-item-text">{technicalFailures.length} criterion assessment(s) could not be evaluated by the provider.</p>
+      </div>}
+    </div>
+
+    <details className="diagnostic-details-accordion">
+      <summary className="diagnostic-details-toggle">View diagnostic details (per-answer evidence)</summary>
+      <div className="diagnostic-details-content mt-3">
+        <p className="muted-note">Detailed baseline criteria across your submitted answers. Distinctions between answers are preserved below.</p>
+        <div className="comparison-columns">
+          {Object.entries(groups).filter(([, rows]) => rows.length).map(([rating, rows]) => <div className="card-flat" key={rating}>
+            <h4>{evidenceLabels[rating as keyof typeof evidenceLabels]} ({rows.length})</h4>
+            {rating === 'technical_failure' && <p className="muted-note">Processing did not provide a usable judgment. This is not evidence of a wrong answer.</p>}
+            <ul>{rows.map((criterion, index) => <li key={index} className="diagnostic-criterion-row">
+              {criterion.case_number ? <span className="case-attribution-badge">Case {criterion.case_number}: </span> : null}
+              <span className="diagnostic-criterion-name">{criterion.criterion}</span>
+              {criterion.evidence && <span className="criterion-evidence-inline"> — “{criterion.evidence}”</span>}
+            </li>)}</ul>
+          </div>)}
+        </div>
+        {groups.technical_failure.length > 0 && onRetryAssessment && <div className="mt-3"><button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={onRetryAssessment}>Retry unavailable assessments</button></div>}
       </div>
+    </details>
+
+    {conceptSlug && onOpenResource && <div className="diagnostic-guide-note mt-2">
+      <span className="muted-note">Optional reading: </span>
+      <TrackedResourceLink url={`/v1/resources/${conceptSlug}`} onOpenResource={onOpenResource} disabled={disabled}>Open {conceptTitle || 'concept'} reference guide</TrackedResourceLink>
     </div>}
   </section>
 }

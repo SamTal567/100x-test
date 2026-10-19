@@ -161,6 +161,8 @@ class GapReport(BaseModel):
     probe_text: Optional[str] = None
     status: str
     source_attempt_id: Optional[str] = None
+    addressed_by_attempt_id: Optional[str] = None
+    addressed_stage: Optional[str] = None
 
 
 class CriterionDetail(BaseModel):
@@ -171,6 +173,8 @@ class CriterionDetail(BaseModel):
     evidence: Optional[str] = None
     reviewer_notes: Optional[str] = None
     status: str = "provisional"
+    unprompted: Optional[bool] = None
+    unprompted_note: Optional[str] = None
 
 
 class AttemptReport(BaseModel):
@@ -209,7 +213,7 @@ class SessionReport(BaseModel):
     session_id: str
     concept_title: str
     stage: str
-    outcome: str  # gap_found, no_gap, inconclusive
+    outcome: str  # gap_found, no_gap, inconclusive, criteria_demonstrated
     gaps: list[GapReport] = Field(default_factory=list)
     attempts: list[AttemptReport] = Field(default_factory=list)
     interventions_used: list[dict] = Field(default_factory=list)
@@ -223,6 +227,7 @@ class SessionReport(BaseModel):
     score_change: Optional[int] = None
     score_summary: Optional[str] = None
     stage_summaries: list[dict] = Field(default_factory=list)
+    session_summary: Optional[dict] = None
 
 
 

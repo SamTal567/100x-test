@@ -142,24 +142,31 @@ SKILLS = {
 }
 
 
-def criterion(skill):
+def criterion(skill, applicability=None):
     title, description, alternative, misconception, probe = SKILLS[skill]
-    return {
+    crit = {
         "criterion": title, "skill_id": skill, "description": description, "weight": 1.0,
         "acceptable_alternatives": [alternative], "common_misconceptions": [misconception],
         "follow_up_probes": [probe],
     }
+    if applicability:
+        crit["applicability"] = applicability
+        if applicability == "unprompted":
+            crit["unprompted"] = True
+            crit["unprompted_note"] = "The scenario did not explicitly ask how to handle key revocation, replacement, or downloaded copies."
+    return crit
 
 
-def case(slug, key, kind, order, scenario, assumptions, answer, skill_ids, *, diagram=None, cloze=None):
+def case(slug, key, kind, order, scenario, assumptions, answer, skill_ids, *, diagram=None, cloze=None, criterion_applicability=None):
     stage = "diagnostic" if kind == "baseline" else "investigate" if kind == "guided_practice" else "apply"
+    crit_app = criterion_applicability or {}
     return {
         "authored_id": authored_id(slug, key), "stage": stage, "case_type": kind, "sort_order": order,
         "scenario_text": scenario, "assumptions": assumptions,
         "response_format": "cloze" if cloze else f"diagram_{diagram['interaction_type']}" if diagram else "written",
         "diagram_preset": diagram, "cloze_preset": cloze,
         "source": "ai-authored", "review_status": "unreviewed",
-        "rubric": {"reference_answer": answer, "criteria": [criterion(s) for s in skill_ids]},
+        "rubric": {"reference_answer": answer, "criteria": [criterion(s, applicability=crit_app.get(s)) for s in skill_ids]},
     }
 
 
@@ -300,7 +307,8 @@ SECRET_CASES = [
          "A React summariser reads a long-lived provider key from a frontend build environment variable and sends it in a browser Authorization header directly to the provider. The build is minified. Explain who can recover the key and draw or describe a request path that keeps this provider secret backend-only.",
          ["The variable value is compiled into shipped browser JavaScript", "The provider key is a secret, not a designated public client token", "A FastAPI backend can make outbound provider calls"],
          "Anyone running the client can inspect its bundle and outgoing request, so minification and the environment-variable name do not protect the key. The browser sends the user's text to FastAPI without that key; FastAPI reads a backend-only configured key and calls the provider, then returns the needed result. An exposed key must be revoked/replaced, not merely removed from a new build.",
-         ["secret_isolation", "backend_provider_path", "secret_lifecycle"]),
+         ["secret_isolation", "backend_provider_path", "secret_lifecycle"],
+         criterion_applicability={"secret_lifecycle": "unprompted"}),
     case("secret-placement", "base-proxy", "baseline", 2,
          "A backend reads a provider key from its environment but implements GET /config returning that key to the browser. The browser then calls the provider. Trace whether the key stayed secret, explain a replacement flow, and what to do about copies already downloaded.",
          ["/config is callable by ordinary users", "The provider key permits billable calls", "This is a long-lived server credential"],

@@ -7,9 +7,10 @@ import { ClozeExerciseView } from '../components/ClozeExerciseView'
 import { SessionTranscript } from '../components/SessionTranscript'
 import { AttemptView, ReportView } from '../components/ReportView'
 import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
-import { TrackedResourceLink } from '../components/TrackedResourceLink'
+import { HelpMenu } from '../components/HelpMenu'
 import { applyDictation, editDraftText } from '../lib/dictation'
-import { draftKey, emptyDraft, pendingKey, readStored, safeResourceUrl, savedPending, writeStored } from '../lib/sessionDrafts'
+import { openTrackedResource } from '../lib/trackedResources'
+import { draftKey, emptyDraft, pendingKey, readStored, savedPending, writeStored } from '../lib/sessionDrafts'
 import type { AnswerDraft } from '../lib/sessionDrafts'
 import type { CasePrompt, SessionDetail, SessionReport, TurnRequest } from '../types'
 
@@ -75,8 +76,10 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [resourceError, setResourceError] = useState<string | null>(null)
   const [pending, setPending] = useState<TurnRequest | null>(() => savedPending(sessionId))
   const [utility, setUtility] = useState<'clarify' | 'correct_ai' | null>(null)
+  const [investigateMode, setInvestigateMode] = useState<'tutoring' | 'revision'>('tutoring')
   const headingRef = useRef<HTMLHeadingElement>(null)
   const chatRef = useRef<HTMLDivElement>(null)
 
@@ -118,7 +121,10 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
       if (!failed) { setPending(null); writeStored(pendingKey(sessionId), null); setUtility(null) }
       try { await hydrate() } catch { setError('The request was saved, but the latest session could not be refreshed. Reload to restore the saved state.') }
       if (failed) setError('Your submission is saved. Processing did not finish. Retry the saved request to resume it without submitting another answer.')
-      if (!failed && (response.stage !== session?.stage || response.current_prompt?.id !== session?.current_prompt?.id)) headingRef.current?.focus()
+      if (!failed && (response.stage !== session?.stage || response.current_prompt?.id !== session?.current_prompt?.id)) {
+        headingRef.current?.focus()
+        setInvestigateMode('tutoring')
+      }
       return !failed
     } catch (reason) {
       // A timeout can happen after persistence. Retain exact ID, version and body.
@@ -144,10 +150,28 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
 
   const composer = (action: Action, label: string, submitLabel: string, exercises = false, voice = true) => <AnswerComposer key={`${sessionId}:${session?.current_prompt?.id}:${action}`} sessionId={sessionId} prompt={session?.current_prompt} action={action} label={label} submitLabel={submitLabel} exercises={exercises} voice={voice} disabled={submitting || Boolean(pending)} send={send} />
   const can = (action: Action) => session?.allowed_actions?.includes(action) || false
-  const openResource = async (url: string) => {
+  const confirmResourceOpening = async (url: string): Promise<boolean> => {
     const canonical = url.split('#')[0]
+    setResourceError(null)
     const offered = report?.interventions_used.find(item => item.url === canonical && item.type === 'resource')
-    return send('resource_opened', { resource_id: offered?.id, text: canonical })
+    const success = await send('resource_opened', { resource_id: offered?.id, text: canonical })
+    if (!success) {
+      setResourceError('Could not record guide opening. Please retry.')
+      return false
+    }
+    return true
+  }
+  const openConceptGuide = async (url: string): Promise<boolean> => {
+    const canonical = url.split('#')[0]
+    setResourceError(null)
+    const success = await openTrackedResource(
+      canonical,
+      () => confirmResourceOpening(canonical)
+    )
+    if (!success) {
+      setResourceError(err => err || 'Could not open the concept guide. Please retry or check popup permissions.')
+    }
+    return success
   }
   const actionsDisabled = submitting || Boolean(pending)
   const prompt = session?.current_prompt
@@ -157,52 +181,536 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
   const sourceAttempts = (session?.attempts || []).filter(attempt => sourceIds.has(attempt.id))
   const recordedStages = [...new Set((session?.attempts || []).map(attempt => attempt.stage))]
   if ((session?.messages || []).some(message => message.stage === 'investigate')) recordedStages.push('investigate')
+  const completedStages = [...new Set((session?.attempts || []).map(attempt => attempt.stage))]
+  const attemptedStages = [...new Set([...completedStages, ...((session?.messages || []).map(message => message.stage))])]
+
+  const firstTutorProbe =
+    session?.messages?.find(m => m.stage === 'investigate' && (m.role === 'tutor' || m.role === 'system'))?.content ||
+    session?.evidence_cards?.[0]?.probe_question
 
   if (loading) return <div className="loading-container" role="status"><span className="spinner" />Restoring learning session…</div>
   if (!session) return <div className="error-banner" role="alert"><span>{error || 'This session could not be loaded.'}</span><button className="btn btn-secondary" onClick={onBackToCatalogue}>Catalogue</button></div>
 
-  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Unfamiliar Case — Application & Evaluation' : session.practice_active ? 'Guided practice — Support is recorded' : 'Investigation and tutoring'
-  return <div className="session-page-wrapper">
-    <div className="card session-topbar mb-4"><div className="session-topbar-header"><div className="session-title-group"><button type="button" className="btn btn-secondary btn-sm" onClick={onBackToCatalogue}>← Catalogue</button><div><h1 ref={headingRef} tabIndex={-1} className="session-concept-title">{session.concept_title || 'Concept Check'}</h1><div className="session-stage-subtitle">{stageTitle}</div></div></div></div><div className="session-progress-wrapper"><StageProgressBar currentStage={session.stage} recordedStages={recordedStages} /></div></div>
-    {error && <div className="error-banner mb-4" role="alert"><span>{error}</span></div>}
-    {pending && <div className="card recovery-card mb-4" role="status"><strong>Saved request awaiting confirmation</strong><p>{submitting ? 'Saving and processing your request…' : 'Retry resumes this exact request and preserves its original submission identifier.'}</p><div className="action-wrap"><button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => execute(pending)}>Retry saved request</button>{terminal && can('finish_session') && session.processing_status === 'failed' && <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => send('finish_session')}>Finish partial report</button>}</div></div>}
-    {!terminal && <div className="stage-content-container">
-      {prompt && <PromptView prompt={prompt} />}
-      {session.stage === 'investigate' && <>
-        <DiagnosticFeedback
-          attempts={session.attempts || []}
-          conceptSlug={session.concept_slug}
-          conceptTitle={session.concept_title}
-          onScrollToChat={() => chatRef.current?.scrollIntoView({ behavior: 'smooth' })}
-          onRetryAssessment={can('retry_processing') ? () => { void send('retry_processing') } : undefined}
-          disabled={actionsDisabled}
-          onOpenResource={openResource}
-        />
-        {sourceAttempts.map(attempt => <details key={attempt.id} className="earlier-answers-panel"><summary className="earlier-answers-summary">Your original answer for this concern</summary><AttemptView attempt={attempt} anchor={false} /></details>)}
-        {(session.evidence_cards || []).map((card, index) => <div className="gap-finding-card" key={card.id || index}><strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>{card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}{card.probe_question && <p>Follow-up: {card.probe_question}</p>}</div>)}
-      </>}
-      <div ref={chatRef}>
-        <SessionTranscript messages={session.messages || []} stage={session.stage} onOpenResource={openResource} disabled={actionsDisabled || !can('resource_opened')} />
-      </div>
-      {session.stage === 'investigate' && <div className="tutoring-actions action-wrap">
-        {([['request_hint', 'Request a hint'], ['request_teaching', 'Ask for an explanation'], ['request_practice', 'Try guided practice'], ['request_help', 'Suggest a resource']] as const).filter(([action]) => can(action)).map(([action, label]) => <button type="button" key={action} className="btn btn-secondary btn-sm" disabled={actionsDisabled} onClick={() => send(action)}>{label}</button>)}
-      </div>}
-      {session.stage === 'investigate' && report?.interventions_used.filter(item => item.url && safeResourceUrl(item.url)).map(item => <section className="card recovery-card" key={item.id || item.url} aria-label="Suggested resource"><strong>{item.title || 'Authored resource'}</strong><p className="muted-note">Reading is optional. Opening is recorded separately from your self-reported completion; neither establishes understanding.</p><div className="action-wrap"><TrackedResourceLink url={safeResourceUrl(item.url!)!} onOpenResource={openResource} disabled={actionsDisabled || !can('resource_opened')}>Open resource</TrackedResourceLink>{can('resource_completed') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled || item.completed} onClick={() => send('resource_completed', { resource_id: item.resource_id || item.id })}>{item.completed ? 'Marked complete (self-reported)' : 'Mark resource complete'}</button>}</div></section>)}
-      <div className="action-wrap">{can('clarify') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled} aria-expanded={utility === 'clarify'} onClick={() => setUtility(utility === 'clarify' ? null : 'clarify')}>Clarify the scenario</button>}{can('correct_ai') && <button className="btn btn-secondary btn-sm" disabled={actionsDisabled} aria-expanded={utility === 'correct_ai'} onClick={() => setUtility(utility === 'correct_ai' ? null : 'correct_ai')}>Correct the AI’s interpretation</button>}</div>
-      {utility && can(utility) && composer(utility, utility === 'clarify' ? 'Question about the scenario' : 'Correction of the AI’s interpretation', utility === 'clarify' ? 'Send clarification question' : 'Send correction', false, false)}
-      {session.stage === 'diagnostic' && can('submit_answer') && composer('submit_answer', 'Explain what happens and why', 'Save baseline answer →', true)}
-      {session.stage === 'investigate' && <>
-        {can('answer_probe') && composer('answer_probe', 'Reply to the tutor', 'Send reply')}
-        {session.practice_active && can('submit_practice') && composer('submit_practice', 'Practice reasoning and justification', 'Submit guided practice', true)}
-        {!session.practice_active && can('submit_answer') && <details className="revision-panel" open><summary>Ready to revise the original answer?</summary>{composer('submit_answer', 'Revised explanation of the original case', 'Submit revised answer →', true)}</details>}
-        {can('continue') && <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={() => send('continue')}>⚡ Ready for unfamiliar case challenge →</button>}
-      </>}
-      {session.stage === 'apply' && can('submit_answer') && composer('submit_answer', 'Explain what happens in this unfamiliar case and why', 'Submit unfamiliar case & view comparison report →', true)}
+  const stageTitle = terminal ? 'Evidence report' : session.stage === 'diagnostic' ? `Case ${session.diagnostic_index + 1}${session.diagnostic_total ? ` of ${session.diagnostic_total}` : ''} — Baseline reasoning` : session.stage === 'apply' ? 'Unfamiliar Case — Application & Evaluation' : session.practice_active ? 'Guided practice — Support is recorded' : investigateMode === 'revision' ? 'Answer revision — Incorporating tutoring' : 'Investigation and tutoring'
 
-      {(session.attempts || []).length > 0 && <details className="earlier-answers-panel"><summary className="earlier-answers-summary">Earlier submitted answers ({session.attempts?.length})</summary><div className="attempts-stack">{session.attempts?.map(attempt => <AttemptView key={attempt.id} attempt={attempt} />)}</div></details>}
-      {can('finish_session') && <div className="finish-session-panel"><p>You can finish with the evidence collected so far. Unattempted stages will remain unassessed.</p>{pending && session.processing_status === 'failed' && <p>Failed processing will stop. Your saved answer remains in the partial evidence report.</p>}<button type="button" className="btn btn-secondary" disabled={submitting || (Boolean(pending) && session.processing_status !== 'failed')} onClick={() => send('finish_session')}>{pending && session.processing_status === 'failed' ? 'Finish partial report' : 'Finish with current evidence'}</button></div>}
+  return <div className="session-page-wrapper">
+    <div className="card session-topbar mb-4">
+      <div className="session-topbar-header">
+        <div className="session-title-group">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onBackToCatalogue}>← Catalogue</button>
+          <div>
+            <h1 ref={headingRef} tabIndex={-1} className="session-concept-title">{session.concept_title || 'Concept Check'}</h1>
+            <div className="session-stage-subtitle">{stageTitle}</div>
+          </div>
+        </div>
+      </div>
+      <div className="session-progress-wrapper">
+        <StageProgressBar
+          currentStage={session.stage}
+          completedStages={completedStages}
+          attemptedStages={attemptedStages}
+          recordedStages={recordedStages}
+        />
+      </div>
+    </div>
+
+    {error && <div className="error-banner mb-4" role="alert"><span>{error}</span></div>}
+    {resourceError && (
+      <div className="error-banner mb-4" role="alert">
+        <span>{resourceError}</span>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResourceError(null)}>Dismiss</button>
+      </div>
+    )}
+    {pending && <div className="card recovery-card mb-4" role="status">
+      <strong>Saved request awaiting confirmation</strong>
+      <p>{submitting ? 'Saving and processing your request…' : 'Retry resumes this exact request and preserves its original submission identifier.'}</p>
+      <div className="action-wrap">
+        <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => execute(pending)}>Retry saved request</button>
+        {terminal && can('finish_session') && session.processing_status === 'failed' && <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => send('finish_session')}>Finish partial report</button>}
+      </div>
     </div>}
-    {terminal && (report ? <ReportView report={report} onBack={onBackToCatalogue} onOpenSession={onOpenSession} onRetryAssessments={can('retry_processing') ? () => { void send('retry_processing') } : undefined} retryDisabled={actionsDisabled} /> : <div className="card" role="status"><p>The saved report could not be loaded.</p><button className="btn btn-secondary" onClick={() => hydrate().catch(reason => setError(String(reason)))}>Reload report</button></div>)}
-    {terminal && <SessionTranscript messages={session.messages || []} stage={session.stage} />}
+
+    {!terminal && <div className="stage-content-container">
+      {/* Stage: Diagnostic Baseline */}
+      {session.stage === 'diagnostic' && (
+        <div className="diagnostic-workspace">
+          {prompt && <PromptView prompt={prompt} />}
+          {session.messages && session.messages.filter(m => m.stage === 'diagnostic').length > 0 && (
+            <div className="diagnostic-clarification-thread mb-3">
+              <SessionTranscript
+                messages={session.messages.filter(m => m.stage === 'diagnostic')}
+                stage="diagnostic"
+                onOpenResource={confirmResourceOpening}
+                disabled={actionsDisabled || !can('resource_opened')}
+              />
+            </div>
+          )}
+          {can('clarify') && (
+            <div className="diagnostic-clarify-bar mb-2">
+              {!utility && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={actionsDisabled}
+                  onClick={() => setUtility('clarify')}
+                >
+                  ❓ Ask a clarification question about the scenario
+                </button>
+              )}
+            </div>
+          )}
+          {utility === 'clarify' ? (
+            <div className="utility-composer-wrapper card p-3 mb-3">
+              <div className="utility-composer-header mb-2">
+                <strong>Ask about scenario assumptions</strong>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setUtility(null)}
+                >
+                  ✕ Cancel (return to answer)
+                </button>
+              </div>
+              {composer(
+                'clarify',
+                'Question about the scenario assumptions',
+                'Send clarification question',
+                false,
+                false
+              )}
+            </div>
+          ) : (
+            can('submit_answer') && composer('submit_answer', 'Explain what happens and why', 'Save baseline answer →', true)
+          )}
+        </div>
+      )}
+
+      {/* Stage: Investigate - Guided Practice Active */}
+      {session.stage === 'investigate' && session.practice_active && (
+        <div className="guided-practice-workspace">
+          <div className="practice-header-card card mb-3">
+            <span className="practice-header-badge">Guided practice · Supported learning</span>
+            <h2 className="practice-title">Focused Practice Exercise</h2>
+            <p className="muted-note">
+              Practice is supported learning to help test your thinking. Submitting practice returns you to the tutoring conversation. It does not replace your baseline answer or count as an independent assessment.
+            </p>
+          </div>
+          {prompt && <PromptView prompt={prompt} />}
+          {session.messages && session.messages.length > 0 && (
+            <details className="practice-transcript-details card p-2 mb-3">
+              <summary className="text-sm text-muted">View tutoring conversation & practice guidance ({session.messages.length} messages)</summary>
+              <div className="mt-2">
+                <SessionTranscript
+                  messages={session.messages}
+                  stage="investigate"
+                  onOpenResource={confirmResourceOpening}
+                  disabled={actionsDisabled || !can('resource_opened')}
+                />
+              </div>
+            </details>
+          )}
+          <div className="practice-help-controls-bar mb-2">
+            {can('request_hint') && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-hint"
+                disabled={actionsDisabled}
+                onClick={() => send('request_hint')}
+                title="Request a conceptual clue for this practice exercise"
+              >
+                💡 Give me a hint
+              </button>
+            )}
+            {can('request_teaching') && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={actionsDisabled}
+                onClick={() => send('request_teaching')}
+              >
+                📖 Explain concept
+              </button>
+            )}
+            {can('clarify') && !utility && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={actionsDisabled}
+                onClick={() => setUtility('clarify')}
+              >
+                ❓ Ask a question
+              </button>
+            )}
+          </div>
+          {utility === 'clarify' ? (
+            <div className="utility-composer-wrapper card p-3 mb-3">
+              <div className="utility-composer-header mb-2">
+                <strong>Ask a practice question</strong>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setUtility(null)}
+                >
+                  ✕ Cancel (return to practice)
+                </button>
+              </div>
+              {composer(
+                'clarify',
+                'Question about this practice exercise',
+                'Send question',
+                false,
+                false
+              )}
+            </div>
+          ) : (
+            can('submit_practice') && (
+              <div className="practice-composer-wrapper">
+                {composer('submit_practice', 'Practice reasoning and justification', 'Submit guided practice →', true, true)}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Stage: Investigate - Dedicated Revision Workspace */}
+      {session.stage === 'investigate' && !session.practice_active && investigateMode === 'revision' && (
+        <div className="revision-workspace">
+          <div className="revision-nav-bar mb-3">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setInvestigateMode('tutoring')}
+            >
+              ← Return to tutoring conversation
+            </button>
+          </div>
+          <div className="card revision-intro-card mb-3">
+            <span className="scenario-label-badge">Revision Workspace</span>
+            <h2>Review & Revise Your Baseline Answer</h2>
+            <p className="muted-note">
+              Incorporate what you explored with the tutor. Your draft is automatically saved in this browser tab even if you return to tutoring.
+            </p>
+          </div>
+          {prompt && <PromptView prompt={prompt} />}
+          {sourceAttempts.length > 0 && (
+            <details className="earlier-answers-panel mb-3">
+              <summary className="earlier-answers-summary">
+                Review your original baseline answer
+              </summary>
+              <div className="attempts-stack">
+                {sourceAttempts.map(attempt => (
+                  <AttemptView key={attempt.id} attempt={attempt} anchor={false} />
+                ))}
+              </div>
+            </details>
+          )}
+          {can('submit_answer') && (
+            <div className="revision-composer-wrapper">
+              {composer(
+                'submit_answer',
+                'Revised explanation of the original case',
+                'Submit revised answer →',
+                true,
+                true
+              )}
+            </div>
+          )}
+          {can('continue') && (
+            <details className="skip-revision-details mt-4">
+              <summary className="text-sm text-muted">Prefer not to revise? Proceed directly to unfamiliar case</summary>
+              <div className="skip-revision-content p-3 mt-1">
+                <p className="muted-note">
+                  Skipping revision means your original baseline answer remains the final evidence for this case. You will move directly to an independent unfamiliar transfer case.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={actionsDisabled}
+                  onClick={() => send('continue')}
+                >
+                  Skip revision & attempt unfamiliar case →
+                </button>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* Stage: Investigate - Primary Tutoring Workspace */}
+      {session.stage === 'investigate' && !session.practice_active && investigateMode === 'tutoring' && (
+        <div className="tutoring-workspace">
+          <div className="tutoring-case-indicator mb-3">
+            <span className="case-indicator-badge">Tutoring Focus</span>
+            <span className="case-indicator-title">
+              {prompt?.case_type ? `${prompt.case_type.replaceAll('_', ' ')} scenario` : 'Baseline diagnostic scenario'}
+            </span>
+          </div>
+
+          <DiagnosticFeedback
+            attempts={session.attempts || []}
+            conceptSlug={session.concept_slug}
+            conceptTitle={session.concept_title}
+            nextQuestion={firstTutorProbe || undefined}
+            onScrollToChat={() => chatRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            onRetryAssessment={can('retry_processing') ? () => { void send('retry_processing') } : undefined}
+            disabled={actionsDisabled}
+            onOpenResource={confirmResourceOpening}
+          />
+
+          <details className="contextual-reference-panel mb-3">
+            <summary className="contextual-reference-summary">
+              📖 View original scenario, stated assumptions & baseline answer
+            </summary>
+            <div className="contextual-reference-content p-3">
+              {prompt && <PromptView prompt={prompt} />}
+              {sourceAttempts.length > 0 && (
+                <div className="mt-3">
+                  <h4 className="text-sm font-semibold mb-2">Your original baseline answer:</h4>
+                  {sourceAttempts.map(attempt => (
+                    <AttemptView key={attempt.id} attempt={attempt} anchor={false} />
+                  ))}
+                </div>
+              )}
+              {(session.evidence_cards || []).length > 0 && (
+                <div className="mt-3">
+                  <h4 className="text-sm font-semibold mb-2">Baseline diagnostic findings:</h4>
+                  {(session.evidence_cards || []).map((card, index) => (
+                    <div className="gap-finding-card mb-2" key={card.id || index}>
+                      <strong>{card.title || card.gap_description || 'Possible concern to investigate'}</strong>
+                      {card.evidence_quote && <blockquote>{card.evidence_quote}</blockquote>}
+                      {card.probe_question && <p className="text-sm">Follow-up: {card.probe_question}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+
+          <div ref={chatRef} className="tutoring-chat-wrapper">
+            <SessionTranscript
+              messages={session.messages || []}
+              stage={session.stage}
+              onOpenResource={confirmResourceOpening}
+              disabled={actionsDisabled || !can('resource_opened')}
+            />
+          </div>
+
+          <div className="tutoring-composer-area mt-3">
+            <div className="help-controls-bar mb-2">
+              {can('request_hint') && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-hint"
+                  disabled={actionsDisabled}
+                  onClick={() => send('request_hint')}
+                  title="Request a conceptual clue without revealing the answer"
+                >
+                  💡 Give me a hint
+                </button>
+              )}
+              <HelpMenu
+                canTeaching={can('request_teaching')}
+                canPractice={can('request_practice')}
+                canResource={can('request_help') || Boolean(session.concept_slug)}
+                canClarify={can('clarify')}
+                canCorrectAi={can('correct_ai')}
+                disabled={actionsDisabled}
+                onSelect={actionKey => {
+                  if (actionKey === 'teaching') send('request_teaching')
+                  else if (actionKey === 'practice') send('request_practice')
+                  else if (actionKey === 'resource') {
+                    if (session.concept_slug) openConceptGuide(`/v1/resources/${session.concept_slug}`)
+                    else send('request_help')
+                  }
+                  else if (actionKey === 'clarify') setUtility('clarify')
+                  else if (actionKey === 'correct_ai') setUtility('correct_ai')
+                }}
+              />
+            </div>
+
+            {utility && can(utility) ? (
+              <div className="utility-composer-wrapper card p-3 mb-3">
+                <div className="utility-composer-header mb-2">
+                  <strong>{utility === 'clarify' ? 'Ask about the scenario assumptions' : 'Point out tutor misunderstanding'}</strong>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setUtility(null)}
+                  >
+                    ✕ Cancel (return to chat)
+                  </button>
+                </div>
+                {composer(
+                  utility,
+                  utility === 'clarify' ? 'Question about the scenario' : 'Correction of the AI’s interpretation',
+                  utility === 'clarify' ? 'Send clarification question' : 'Send correction',
+                  false,
+                  false
+                )}
+              </div>
+            ) : (
+              can('answer_probe') && composer('answer_probe', 'Reply to the tutor', 'Send reply')
+            )}
+          </div>
+
+          <div className="revision-progression-bar card p-3 mt-4">
+            <div className="progression-callout-content">
+              <div>
+                <h3 className="progression-callout-title">Ready to revise your answer?</h3>
+                <p className="muted-note">
+                  When you have explored the concept with the tutor, update your baseline explanation to demonstrate what you learned.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={actionsDisabled}
+                onClick={() => setInvestigateMode('revision')}
+              >
+                Review and revise my answer →
+              </button>
+            </div>
+            {can('continue') && (
+              <details className="skip-revision-details mt-2">
+                <summary className="text-sm text-muted">Skip revision and go directly to unfamiliar scenario</summary>
+                <div className="skip-revision-content p-2 mt-1">
+                  <p className="muted-note">
+                    Skipping revision leaves your initial baseline answer as the only evidence for the original case. You will move directly to an unfamiliar case challenge.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={actionsDisabled}
+                    onClick={() => send('continue')}
+                  >
+                    Skip revision & proceed to unfamiliar case →
+                  </button>
+                </div>
+              </details>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Stage: Apply - Unfamiliar Transfer Case */}
+      {session.stage === 'apply' && (
+        <div className="unfamiliar-case-workspace">
+          <div className="unfamiliar-case-banner card mb-3">
+            <span className="scenario-label-badge">Unfamiliar Transfer Case</span>
+            <h2>Apply your understanding to a new scenario</h2>
+            <p className="muted-note">
+              This fresh scenario tests whether the principles transfer to an unfamiliar context. Answer independently without hints.
+            </p>
+          </div>
+          {prompt && <PromptView prompt={prompt} />}
+          {session.messages && session.messages.filter(m => m.stage === 'apply').length > 0 && (
+            <div className="apply-clarification-thread mb-3">
+              <SessionTranscript
+                messages={session.messages.filter(m => m.stage === 'apply')}
+                stage="apply"
+                onOpenResource={confirmResourceOpening}
+                disabled={actionsDisabled || !can('resource_opened')}
+              />
+            </div>
+          )}
+          {can('clarify') && (
+            <div className="apply-clarify-bar mb-2">
+              {!utility && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={actionsDisabled}
+                  onClick={() => setUtility('clarify')}
+                >
+                  ❓ Ask a factual clarification question about this scenario
+                </button>
+              )}
+            </div>
+          )}
+          {utility === 'clarify' ? (
+            <div className="utility-composer-wrapper card p-3 mb-3">
+              <div className="utility-composer-header mb-2">
+                <strong>Ask a factual question about the scenario</strong>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setUtility(null)}
+                >
+                  ✕ Cancel (return to answer)
+                </button>
+              </div>
+              <p className="muted-note">
+                Only factual scenario clarification is provided during the transfer case; hints and coaching are not available.
+              </p>
+              {composer(
+                'clarify',
+                'Factual question about the scenario assumptions',
+                'Send clarification question',
+                false,
+                false
+              )}
+            </div>
+          ) : (
+            can('submit_answer') && (
+              <div className="apply-composer-wrapper">
+                {composer(
+                  'submit_answer',
+                  'Explain what happens in this unfamiliar case and why',
+                  'Submit unfamiliar case & view comparison report →',
+                  true,
+                  true
+                )}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Earlier Submitted Answers Accordion */}
+      {(session.attempts || []).length > 0 && (
+        <details className="earlier-answers-panel mt-4">
+          <summary className="earlier-answers-summary">
+            All submitted answers in this session ({session.attempts?.length})
+          </summary>
+          <div className="attempts-stack mt-2">
+            {session.attempts?.map(attempt => (
+              <AttemptView key={attempt.id} attempt={attempt} />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Quieter Finish Session Early Control */}
+      {can('finish_session') && (
+        <details className="quiet-finish-panel mt-4">
+          <summary className="quiet-finish-summary text-sm text-muted">
+            Finish session early…
+          </summary>
+          <div className="quiet-finish-content card p-3 mt-2">
+            <h4>End session with partial evidence</h4>
+            <p className="muted-note">
+              You can finish now with the evidence collected so far. Any remaining steps (such as revising your answer or attempting the unfamiliar transfer case) will remain unassessed. Your report will accurately reflect that these steps were not attempted.
+            </p>
+            {pending && session.processing_status === 'failed' && (
+              <p className="text-warning text-sm">
+                Failed processing will stop. Your saved answer remains in the partial evidence report.
+              </p>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={submitting || (Boolean(pending) && session.processing_status !== 'failed')}
+              onClick={() => send('finish_session')}
+            >
+              {pending && session.processing_status === 'failed'
+                ? 'Finish partial report'
+                : 'End session and view partial report'}
+            </button>
+          </div>
+        </details>
+      )}
+    </div>}
+
+    {terminal && (report ? <ReportView report={report} messages={session.messages || []} onBack={onBackToCatalogue} onOpenSession={onOpenSession} onRetryAssessments={can('retry_processing') ? () => { void send('retry_processing') } : undefined} retryDisabled={actionsDisabled} /> : <div className="card" role="status"><p>The saved report could not be loaded.</p><button className="btn btn-secondary" onClick={() => hydrate().catch(reason => setError(String(reason)))}>Reload report</button></div>)}
   </div>
 }
