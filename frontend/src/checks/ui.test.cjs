@@ -672,3 +672,18 @@ test('auth modal renders sign in and registration forms with accessible tablist'
   assert.match(html, /Password/)
   assert.match(html, /Sign In →/)
 })
+
+test('auth page renders first-touch login and sign-up card with tabs and credentials form', () => {
+  const { AuthPage } = require('../pages/AuthPage.tsx')
+  const html = render(AuthPage, { onAuthSuccess: () => {} })
+  assert.match(html, /Sign In to Continue/)
+  assert.match(html, /role="tablist"/)
+  assert.match(html, /Sign In/)
+  assert.match(html, /Create Account/)
+  assert.match(html, /auth-page-card/)
+  assert.match(html, /Email Address/)
+  assert.match(html, /Password/)
+  assert.match(html, /Sign In →/)
+  assert.match(html, /Create one now/)
+})
+

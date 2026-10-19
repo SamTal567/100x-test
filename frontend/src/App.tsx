@@ -1,42 +1,56 @@
 import { useState, useEffect } from 'react'
 import { CataloguePage } from './pages/CataloguePage'
 import { SessionPage } from './pages/SessionPage'
+import { AuthPage } from './pages/AuthPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { ReviewerDrawer } from './components/ReviewerDrawer'
-import { AuthModal } from './components/AuthModal'
 import { api } from './api/client'
 import type { HealthResponse, User } from './types'
 import './index.css'
 
 
 export function App() {
-  const [activeView, setActiveView] = useState<'catalogue' | 'session'>(() => localStorage.getItem('cc_active_session_id') && localStorage.getItem('cc_active_view') !== 'catalogue' ? 'session' : 'catalogue')
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
-    return localStorage.getItem('cc_active_session_id') || null
-  })
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [activeView, setActiveView] = useState<'catalogue' | 'session'>('catalogue')
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [reviewerOpen, setReviewerOpen] = useState(false)
   const [reviewRevision, setReviewRevision] = useState(0)
   const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [authModalOpen, setAuthModalOpen] = useState(false)
-
-  useEffect(() => { localStorage.setItem('cc_active_view', activeView) }, [activeView])
 
   useEffect(() => {
-    if (currentSessionId) {
+    if (currentUser) {
+      localStorage.setItem('cc_active_view', activeView)
+    }
+  }, [activeView, currentUser])
+
+  useEffect(() => {
+    if (currentUser && currentSessionId) {
       localStorage.setItem('cc_active_session_id', currentSessionId)
-    } else {
+    } else if (!currentUser) {
       localStorage.removeItem('cc_active_session_id')
     }
-  }, [currentSessionId])
+  }, [currentSessionId, currentUser])
 
   useEffect(() => {
     api.getHealth().then(setHealth).catch(() => null)
     api.getMe().then(res => {
       if (res.authenticated && res.user) {
         setCurrentUser(res.user)
+        const savedSession = localStorage.getItem('cc_active_session_id')
+        const savedView = localStorage.getItem('cc_active_view')
+        if (savedSession && savedView === 'session') {
+          setCurrentSessionId(savedSession)
+          setActiveView('session')
+        }
+      } else {
+        setCurrentUser(null)
       }
-    }).catch(() => null)
+    }).catch(() => {
+      setCurrentUser(null)
+    }).finally(() => {
+      setAuthLoading(false)
+    })
   }, [])
 
   const handleLogout = async () => {
@@ -44,9 +58,17 @@ export function App() {
       await api.logout()
     } finally {
       setCurrentUser(null)
+      setCurrentSessionId(null)
+      setActiveView('catalogue')
+      localStorage.removeItem('cc_active_session_id')
+      localStorage.removeItem('cc_jwt_token')
     }
   }
 
+  const handleAuthSuccess = (user: User) => {
+    setCurrentUser(user)
+    setActiveView('catalogue')
+  }
 
   const handleSelectConcept = async (conceptId: string) => {
     try {
@@ -77,8 +99,8 @@ export function App() {
             <button
               type="button"
               className="brand-btn"
-              onClick={() => setActiveView('catalogue')}
-              title="Return to Concept Check Catalogue"
+              onClick={() => currentUser && setActiveView('catalogue')}
+              title={currentUser ? 'Return to Concept Check Catalogue' : 'Concept Check'}
             >
               <span className="brand-icon" aria-hidden="true">💾</span>
               <span className="brand-title">Concept Check</span>
@@ -86,29 +108,31 @@ export function App() {
             <span className="brand-badge">Module 2</span>
           </div>
 
-          <nav className="header-nav" aria-label="Main navigation">
-            <button
-              type="button"
-              className={`nav-tab ${activeView === 'catalogue' ? 'active' : ''}`}
-              onClick={() => setActiveView('catalogue')}
-              aria-current={activeView === 'catalogue' ? 'page' : undefined}
-            >
-              <span className="tab-icon" aria-hidden="true">📚</span>
-              <span>Catalogue</span>
-            </button>
-
-            {currentSessionId && (
+          {currentUser && (
+            <nav className="header-nav" aria-label="Main navigation">
               <button
                 type="button"
-                className={`nav-tab ${activeView === 'session' ? 'active' : ''}`}
-                onClick={() => setActiveView('session')}
-                aria-current={activeView === 'session' ? 'page' : undefined}
+                className={`nav-tab ${activeView === 'catalogue' ? 'active' : ''}`}
+                onClick={() => setActiveView('catalogue')}
+                aria-current={activeView === 'catalogue' ? 'page' : undefined}
               >
-                <span className="tab-icon active-dot" aria-hidden="true">✏️</span>
-                <span>Current Session</span>
+                <span className="tab-icon" aria-hidden="true">📚</span>
+                <span>Catalogue</span>
               </button>
-            )}
-          </nav>
+
+              {currentSessionId && (
+                <button
+                  type="button"
+                  className={`nav-tab ${activeView === 'session' ? 'active' : ''}`}
+                  onClick={() => setActiveView('session')}
+                  aria-current={activeView === 'session' ? 'page' : undefined}
+                >
+                  <span className="tab-icon active-dot" aria-hidden="true">✏️</span>
+                  <span>Current Session</span>
+                </button>
+              )}
+            </nav>
+          )}
 
           <div className="header-utilities">
             {/* Plain language provider status */}
@@ -127,7 +151,7 @@ export function App() {
             </div>
 
             {/* User Authentication state */}
-            {currentUser ? (
+            {currentUser && (
               <div className="user-profile-badge" title={`Signed in as ${currentUser.email}`}>
                 <span className="user-avatar-initial" aria-hidden="true">
                   {(currentUser.full_name || currentUser.email)[0].toUpperCase()}
@@ -142,14 +166,6 @@ export function App() {
                   Sign Out
                 </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm btn-auth-trigger"
-                onClick={() => setAuthModalOpen(true)}
-              >
-                👤 Sign In
-              </button>
             )}
 
             <ThemeToggle />
@@ -160,23 +176,34 @@ export function App() {
 
       {/* Main Content Area — generous, unconstrained width */}
       <main className="app-main" id="main-content">
-        {activeView === 'catalogue' && (
-          <CataloguePage
-            onSelectConcept={handleSelectConcept}
-            onResumeSession={handleResumeSession}
-            onOpenReviewer={() => setReviewerOpen(true)}
-          />
-        )}
+        {authLoading ? (
+          <div className="auth-loading-state" role="status">
+            <div className="loading-spinner" aria-hidden="true" />
+            <p>Checking authentication status...</p>
+          </div>
+        ) : !currentUser ? (
+          <AuthPage onAuthSuccess={handleAuthSuccess} />
+        ) : (
+          <>
+            {activeView === 'catalogue' && (
+              <CataloguePage
+                onSelectConcept={handleSelectConcept}
+                onResumeSession={handleResumeSession}
+                onOpenReviewer={() => setReviewerOpen(true)}
+              />
+            )}
 
-        {activeView === 'session' && currentSessionId && (
-          <SessionPage
-            key={currentSessionId}
-            sessionId={currentSessionId}
-            onBackToCatalogue={handleBackToCatalogue}
-            onOpenReviewer={() => setReviewerOpen(true)}
-            reviewRevision={reviewRevision}
-            onOpenSession={handleResumeSession}
-          />
+            {activeView === 'session' && currentSessionId && (
+              <SessionPage
+                key={currentSessionId}
+                sessionId={currentSessionId}
+                onBackToCatalogue={handleBackToCatalogue}
+                onOpenReviewer={() => setReviewerOpen(true)}
+                reviewRevision={reviewRevision}
+                onOpenSession={handleResumeSession}
+              />
+            )}
+          </>
         )}
       </main>
 
@@ -185,9 +212,14 @@ export function App() {
         <div className="footer-inner">
           <div className="footer-left">
             <span>100x Module 2 Backend Reasoning</span>
-            {currentSessionId && activeView === 'session' && (
+            {currentUser && currentSessionId && activeView === 'session' && (
               <span className="footer-session-ref">
                 • Reference: <code className="code-ref">{currentSessionId.slice(0, 8)}</code>
+              </span>
+            )}
+            {!currentUser && (
+              <span className="footer-session-ref">
+                • Authentication required
               </span>
             )}
           </div>
@@ -211,19 +243,9 @@ export function App() {
         onClose={() => setReviewerOpen(false)}
         onReviewSubmitted={() => setReviewRevision(value => value + 1)}
       />}
-
-      {/* Authentication Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        onAuthSuccess={(user) => {
-          setCurrentUser(user)
-        }}
-      />
     </div>
   )
 }
 
 
 export default App
-
