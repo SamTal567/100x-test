@@ -1,6 +1,12 @@
 # Concept Check 💾
 
-> **Explain backend mechanisms from first principles, explore reasoning gaps through guided dialogue, and assess evidence of independent application on unfamiliar cases.**
+> **Explain what you think happens, investigate the parts you missed, and try your reasoning on a different scenario.**
+
+Concept Check is a learning and assessment prototype for backend concepts. It combines scenario questions, diagrams, editable voice input and a separate AI tutor chat. Its report shows **what you initially explained, what changed after help, and what you could apply independently**.
+
+**Start here:** [Open the app](https://concept-check-flax.vercel.app) → create an account → choose **Storage & persistence** → answer the diagnostic in your own words. You do not need to write a perfect answer before asking for clarification.
+
+[How a learner improves](#how-a-learner-improves) · [Capabilities](#capabilities) · [Example reports](#example-reports) · [Local setup](#local-setup) · [Verification](#verification)
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-blue?style=for-the-badge&logo=vercel)](https://concept-check-sam-c207.vercel.app)
 [![API Status](https://img.shields.io/badge/API-Render-46E3B7?style=for-the-badge&logo=render)](https://concept-check-api.onrender.com/health)
@@ -34,42 +40,98 @@ A learner may repeat a familiar explanation without being able to predict what h
 
 ---
 
-## 🔄 Four Learning Steps and an Evidence Report
+<a id="how-a-learner-improves"></a>
+## 🔄 How a Learner Improves
+
+The diagnostic is saved first. The learner sees a short summary, then continues to a **separate tutor chat**. The form, conversation, revised answer and unfamiliar case are separate parts of the journey.
 
 ```mermaid
 flowchart LR
-    A["Stage 1: Baseline Diagnostic<br/>(Prepared Scenarios)"] --> B["Stage 2: AI Tutor Chat<br/>(Targeted Probing & Hints)"]
-    B --> C["Stage 3: Answer Revision<br/>(Incorporate New Reasoning)"]
-    C --> D["Stage 4: Unfamiliar Transfer<br/>(Independent Application)"]
-    D --> E["Stage 5: Evidence Report<br/>(Honest Skills Matrix & Export)"]
+    A["Choose concept"] --> B["Answer diagnostic"]
+    B --> C["Review short summary"]
+    C --> D["Discuss one concern with the tutor"]
+    D --> E["Revise answer — optional"]
+    E --> F["Try an unfamiliar case"]
+    F --> G["Review evidence and next steps"]
 ```
 
-### 1. Baseline Diagnostic
-- Learners answer multi-case scenarios involving process memory, server restarts, and disk persistence.
-- **Task Accent Cards (`🎯 Your Task`):** Visually isolates the prompt question from background system descriptions and explicit assumptions.
-- **Prepared Exercises:** Some cases include preset diagrams or cloze selections alongside the required written reasoning. Selection accuracy is assessed separately.
+### A Concrete Example: “Will My Notes Survive a Restart?”
 
-### 2. Socratic AI Tutor Investigation
-- Immediate post-diagnostic summary outlines demonstrated claims and specific areas needing clarification.
-- A separate tutoring workspace contains one active composer. The verified sentence being investigated and its initial follow-up appear together; missing quotations are labelled explicitly.
-- **Hint-First Policy:** The tutor is instructed to offer conceptual clues before explanations and aim for concise replies under 160 words; model responses can vary.
-- **Accessible Help Menu:** Keyboard-navigable WAI-ARIA menu for requesting hints, concept guides, scenario clarifications, or correcting tutor misunderstandings.
-- **Waiting Feedback:** Timed progress messages describe expected processing steps while the request is pending; they are not backend-confirmed progress events.
+The following is an **illustrative learning example**, not a recorded learner result.
 
-### 3. Dedicated Revision Workspace
-- Available through the **"💡 Ready to update your answer?"** callout in the tutoring workspace; the learner chooses when to revise.
-- Drafts are kept per session and action in browser-tab `sessionStorage`, preserving them across view changes and refreshes in that tab. Separate browser tabs do not share drafts.
+**Scenario:** A FastAPI app stores notes only in a Python list. The server restarts. Assume no file or database write has occurred. Explain whether these notes survive, then propose how a redesigned app should save notes and restore them at startup.
 
-### 4. Unfamiliar Transfer Challenge
-- Features a **Concept Focus Anchor** badge reminding learners of the core principle under test.
-- Presents a brand-new scenario (e.g., stale price cache vs. authoritative database) to test whether understanding transfers without coaching.
+| Step | What the learner experiences | Why it helps |
+| :--- | :--- | :--- |
+| **1. Explain first** | “The notes disappear because the Python list is in RAM. I would use a database.” | Captures the learner's own starting reasoning before tutoring. |
+| **2. Identify the missing part** | Feedback can recognise the correct memory explanation while pointing out that the startup recovery path has not been explained. | “You missed this part” is different from “your whole answer is wrong.” |
+| **3. Clarify and discuss** | An illustrative follow-up is: “What should the application read when it starts, and where should those records go?” The learner can reply, request a hint, or correct the tutor's interpretation. | Gives the learner a chance to explain an omission before it is treated as a conceptual gap. |
+| **4. Revise with support recorded** | “The original list is lost. If notes were saved to PostgreSQL before the restart, startup must query those saved records and load the returned data into the application's state.” | Makes the corrected mechanism explicit. The original answer and any help remain saved. |
+| **5. Apply it elsewhere** | A different prepared case might use saved chat messages rather than notes. The learner explains independently what survives and what must be reloaded. | Checks application in another context. The actual case and criteria come from the authored bank. |
+| **6. Read the evidence** | The report separates the initial omission, the supported revision, the unfamiliar-case evidence and anything still untested. | Shows what improved and what needs another check without claiming mastery. |
 
-### 5. Comprehensive Evidence Report
-- **Accurate Session Status:** The banner says **"Session saved"** and lists submitted answers, tutoring activity, unattempted stages and assessment availability. Ending a session does not imply that every step was completed or passed.
-- **Personal Summary Grid:** Categorizes what was demonstrated, missing/incorrect, changed after help, and recommended next steps.
-- **Matched Skills Matrix:** Compares matching skills across baseline, supported revision and the unfamiliar case using visual color-coded pills (Green / Yellow / Gray).
-- **Question-Part Coverage & Appendix:** Lists exact learner quotes, grading justifications, all submitted attempts, support history, and full saved conversation transcript.
-- **A4 Print / PDF Export:** Dedicated Compact Summary vs. Full Appendix views with comprehensive print styling (`@media print`).
+An answer that repeats a tutor explanation is **supported evidence**. A later unfamiliar-case answer provides separate evidence of application when it is completed independently. Neither establishes long-term retention or proves that the tutor caused learning.
+
+### What Happens When Something Is Unclear?
+
+- **The question is unclear:** Ask AI to clarify its wording or stated assumptions. This action uses the current public scenario and recent clarification turns; the model is instructed not to reveal solutions or invent conditions. It is distinct from requesting a teaching hint.
+- **The tutor misunderstood:** Correct its interpretation and explain what you meant. An uncertain interpretation should not automatically become a confirmed misconception.
+- **A part was omitted:** The feedback can name the requested part that was not answered and suggest what to explain next. It does not invent a quotation for an absent answer.
+- **The assessment failed technically:** The report marks the judgment unavailable and offers reassessment. This is an assessment issue, not a learner mistake.
+- **No gap was identified:** The learner can finish without unnecessary remediation. Skipped stages remain unassessed.
+
+<a id="capabilities"></a>
+## ✨ What the App Can Do
+
+| Capability | What it means for the learner |
+| :--- | :--- |
+| **Choose a concept and a prepared scenario** | Work from explicit assumptions and question parts across Modules A, B and C. |
+| **Type or speak an explanation** | Review and edit a voice transcript before submitting. Additional recordings append by default; replacement is an explicit choice. |
+| **Reason with diagrams and cloze exercises** | Complete or repair preset diagrams and fill prepared blanks where included in a case. Written reasoning is assessed separately from selections. |
+| **Review a diagnostic summary** | See demonstrated reasoning and areas needing clarification before entering the chat workspace. |
+| **Discuss a specific concern** | See the saved source sentence when available and answer a focused follow-up. Earlier diagnostic submissions remain accessible without filling the active chat. |
+| **Ask for the right kind of help** | Request a hint, explanation, guided practice or resource; clarify a scenario or correct an interpretation. The tutor is instructed to start with hints and keep replies concise. |
+| **Revise without losing the first answer** | Preserve submitted attempts, their order and the assistance provided. Drafts survive refreshes in the same browser tab. |
+| **Try a different prepared case** | Apply the concept against authored criteria. Support provenance distinguishes an independent response from a prompted one. |
+| **Review and export evidence** | Read the summary and skill comparison, expand detailed evidence, and print a compact summary or full appendix. |
+| **Revisit saved sessions** | Sign in to return to earlier attempts and compare recorded reasoning across sessions. |
+| **Have judgments reviewed** | Staff can inspect and correct provisional AI assessments through the reviewer desk. |
+
+Tutor replies can include text/ASCII diagrams; diagram exercises in the form use **prepared presets**. Model-generated text diagrams are explanatory output and are not automatically verified exercise diagrams.
+
+<a id="example-reports"></a>
+## 📊 What the Report Shows
+
+The report answers three practical questions: **What did I explain correctly? What is still missing? What should I try next?**
+
+The images below are rendered from the application's current report component using **fictional demonstration data and illustrative feedback**. They are examples of the report layout, not real learner records or evidence that someone learned. The durable-write example shown here is separate from the introductory notes example above.
+
+### 1. A Summary That Separates Earlier Difficulties From Current Gaps
+
+The summary distinguishes what was initially omitted or unclear from later matching evidence. It labels a revision as supported evidence, keeps assessment failures separate, and retains multiple next steps when needed—for example, a new case **and** reassessment of an unavailable judgment.
+
+<img src="docs/images/report-summary.png" alt="Example report summary separating demonstrated reasoning, initial difficulties, later evidence, unresolved areas and next steps" width="760">
+
+### 2. A Skill Comparison Across Attempts
+
+Compare each skill across baseline, revision and unfamiliar case. **Not checked** means that stage did not supply evidence for that skill. It does not mean the learner got it wrong. A supported revision alone does not clear the need for an independent recheck.
+
+<img src="docs/images/report-skill-comparison.png" alt="Example skill table showing demonstrated criteria, recorded support and skills not checked in later cases" width="860">
+
+### 3. The Evidence Behind the Summary
+
+Expand the appendix to inspect original prompts, submitted answers, question-part feedback, criterion judgments, recorded assistance and the saved conversation. Feedback can distinguish a correct claim from a missing requested part, explain the concern, and suggest a next action. AI judgments remain provisional until human review.
+
+<details>
+<summary>View an example page of preserved answers and criterion evidence</summary>
+
+<img src="docs/images/report-evidence.png" alt="Example full-report appendix preserving original and revised reasoning alongside criterion evidence and support labels" width="760">
+
+</details>
+
+**Export options:** Compact summary keeps the personal summary and skill table; full report includes the detailed appendix. Expanding evidence on screen does not add it to the compact printout. Page count depends on the session length.
+
+**What the report does not measure:** A count such as “2/2 criteria demonstrated” describes the prepared criteria assessed in that answer. It is not a percentage of overall understanding or a measured learning gain. Technical failures, uncertain judgments and skills not rechecked must remain visible.
 
 ---
 
@@ -141,6 +203,7 @@ The catalogue includes 7 active concepts spanning Module 2 backend reasoning:
 
 ---
 
+<a id="local-setup"></a>
 ## 🚀 Local Development Setup
 
 ### Prerequisites
@@ -209,7 +272,7 @@ Backend tests configure an isolated in-memory database and disable provider cred
 - Real classmate and stranger sessions, including an unseen case before help and a different unseen case afterward.
 - Real microphone/transcription quality and usability across screen sizes and themes.
 
-Automated or synthetic browser runs check software behaviour; they do not replace real-user evidence. Local scratch scripts and screenshots are not part of the published repository.
+Automated or synthetic browser runs check software behaviour; they do not replace real-user evidence. Local scratch audits and private learner exports are not published. The report illustrations in this README use fictional fixtures.
 
 ---
 
@@ -222,7 +285,7 @@ Automated or synthetic browser runs check software behaviour; they do not replac
 | :--- | :---: | :--- |
 | `DATABASE_URL` | Optional locally; configure for deployment | SQLAlchemy connection URI; defaults to a local SQLite file |
 | `SECRET_KEY` | Required in production; recommended locally | Persistent signing secret for JWTs and session tokens; production requires at least 32 characters |
-| `OPENAI_API_KEY` | Required for live AI features | Rubric assessment, gap analysis and tutor turns; missing configuration produces explicit unavailable states |
+| `OPENAI_API_KEY` | Required for live AI features | Rubric assessment, gap analysis, tutor turns and scenario clarification; missing configuration produces explicit unavailable states |
 | `OPENAI_MODEL` | Optional | Model selection; see the current default in `backend/app/config.py` and choose an available model for your account |
 | `FISH_AUDIO_API_KEY`| No | Fish Audio API key for speech-to-text dictation |
 | `FISH_AUDIO_MODEL` | No | Target Fish Audio model ID (default: `transcribe-1-pro`) |
