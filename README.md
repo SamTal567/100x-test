@@ -35,6 +35,7 @@ A learner may repeat a familiar explanation without being able to predict what h
 - **Reasoning and evidence:** Quotes are verified against saved learner answers when available. An omitted answer part has no invented quotation.
 - **Clarification before diagnosis:** Ambiguity or an omission does not automatically establish a misconception.
 - **Prepared assessment criteria:** AI proposes criterion-level judgments against authored reference answers; its judgments remain provisional until human review.
+- **Equivalent reasoning:** Assessment instructions accept correct mechanisms explained in ordinary language. Missing words such as “authoritative” or “durable” should not alone lose credit; separately requested reasoning still needs evidence. This is model guidance, not a guarantee of grading accuracy.
 - **Separate exercise checks:** Diagram and cloze selections are checked separately from conceptual reasoning. A correct selection alone does not prove understanding.
 - **Independent application:** Supported revisions and unfamiliar-case answers remain separate evidence. The app does not establish mastery or long-term retention.
 
@@ -76,9 +77,20 @@ An answer that repeats a tutor explanation is **supported evidence**. A later un
 
 - **The question is unclear:** Ask AI to clarify its wording or stated assumptions. This action uses the current public scenario and recent clarification turns; the model is instructed not to reveal solutions or invent conditions. It is distinct from requesting a teaching hint.
 - **The tutor misunderstood:** Correct its interpretation and explain what you meant. An uncertain interpretation should not automatically become a confirmed misconception.
+- **A revision conflicts with earlier reasoning:** When matching criterion judgments for the same case and version change from demonstrated to an explicit incorrect claim, the app saves the revision and asks for clarification before automatically advancing. The learner can return to chat, revise again, or explicitly proceed. This flags assessment disagreement; it does not prove that someone lost understanding or detect every contradiction in free text.
 - **A part was omitted:** The feedback can name the requested part that was not answered and suggest what to explain next. It does not invent a quotation for an absent answer.
 - **The assessment failed technically:** The report marks the judgment unavailable and offers reassessment. This is an assessment issue, not a learner mistake.
 - **No gap was identified:** The learner can finish without unnecessary remediation. Skipped stages remain unassessed.
+
+**Example revision warning:** Suppose the original answer correctly explains that RAM is temporary, but the revised answer selects RAM as the persistent save destination. The app can ask:
+
+> “Your revision is saved, but its assessment is inconsistent with your earlier reasoning. Could you clarify what you intended in the revised answer?”
+
+The tutor can then explore whether the learner meant **saving permanently** or **loading into memory after restart**, while preserving both submissions. A brief explanation in chat is not silently substituted for the submitted revision.
+
+### How Assistance Is Recorded
+
+The tutor returns an assistance label alongside its message in the same AI call. The backend records tutor-declared **teaching**, **hint**, or **follow-up** content rather than deriving the label only from the clicked button. For example, a direct explanation after “Request a hint” can be recorded as teaching. Unclassified or legacy plain responses are labelled **tutoring with type not recorded**; failed responses do not count as delivered help. This model-proposed classification needs review, and older saved events are not retroactively reclassified.
 
 <a id="capabilities"></a>
 ## ✨ What the App Can Do
@@ -92,6 +104,7 @@ An answer that repeats a tutor explanation is **supported evidence**. A later un
 | **Discuss a specific concern** | See the saved source sentence when available and answer a focused follow-up. Earlier diagnostic submissions remain accessible without filling the active chat. |
 | **Ask for the right kind of help** | Request a hint, explanation, guided practice or resource; clarify a scenario or correct an interpretation. The tutor is instructed to start with hints and keep replies concise. |
 | **Revise without losing the first answer** | Preserve submitted attempts, their order and the assistance provided. Drafts survive refreshes in the same browser tab. |
+| **Clarify an inconsistent revision** | Save a conflicting revision and discuss the difference before automatically moving to the unfamiliar case; proceeding remains the learner's choice. |
 | **Try a different prepared case** | Apply the concept against authored criteria. Support provenance distinguishes an independent response from a prompted one. |
 | **Review and export evidence** | Read the summary and skill comparison, expand detailed evidence, and print a compact summary or full appendix. |
 | **Revisit saved sessions** | Sign in to return to earlier attempts and compare recorded reasoning across sessions. |
@@ -110,11 +123,15 @@ The images below are rendered from the application's current report component us
 
 The summary distinguishes what was initially omitted or unclear from later matching evidence. It labels a revision as supported evidence, keeps assessment failures separate, and retains multiple next steps when needed—for example, a new case **and** reassessment of an unavailable judgment.
 
+The latest report also identifies **starting strengths demonstrated before tutoring** and displays **“Revision needs clarification”** when matching saved assessments conflict. These details help distinguish existing knowledge, later application and unresolved interpretation. The screenshots below illustrate the layout; these newer fields appear when the session contains the relevant evidence.
+
 <img src="docs/images/report-summary.png" alt="Example report summary separating demonstrated reasoning, initial difficulties, later evidence, unresolved areas and next steps" width="760">
 
 ### 2. A Skill Comparison Across Attempts
 
 Compare each skill across baseline, revision and unfamiliar case. **Not checked** means that stage did not supply evidence for that skill. It does not mean the learner got it wrong. A supported revision alone does not clear the need for an independent recheck.
+
+Resolving a specific concern requires matching criterion evidence, not just a shared broad skill label. For example, explaining how a cache reloads from a database does not automatically resolve a separate concern about why the old process memory disappears. A later skill success can remain visible while the original requirement stays open.
 
 <img src="docs/images/report-skill-comparison.png" alt="Example skill table showing demonstrated criteria, recorded support and skills not checked in later cases" width="860">
 
@@ -132,6 +149,8 @@ Expand the appendix to inspect original prompts, submitted answers, question-par
 **Export options:** Compact summary keeps the personal summary and skill table; full report includes the detailed appendix. Expanding evidence on screen does not add it to the compact printout. Page count depends on the session length.
 
 **What the report does not measure:** A count such as “2/2 criteria demonstrated” describes the prepared criteria assessed in that answer. It is not a percentage of overall understanding or a measured learning gain. Technical failures, uncertain judgments and skills not rechecked must remain visible.
+
+An **inconclusive** result names its cause where recorded: incomplete initial gap analysis, missing criterion evidence or processing, uncertain judgments, or technical assessment failures. Initial gap analysis and criterion assessment are separate operations; one failing does not make the other operation's saved judgments disappear.
 
 ---
 
