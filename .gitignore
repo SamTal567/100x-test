@@ -32,3 +32,11 @@
 .idea/
 .vscode/
 *.log
+
+# Agent metadata and local prompts
+.agents/
+skills-lock.json
+PROJECT_CONTEXT.md
+AGENTS.md
+*Prompt*.md
+*prompt*.md

@@ -6,7 +6,7 @@ The catalogue contains seven concepts across requests/security, persistence, and
 
 ## Quick Start
 
-See [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) for current architecture, verification and handoff. Use Python 3.12 and a Node version compatible with Vite 8.
+Use Python 3.12 and a Node version compatible with Vite 8.
 
 ### Backend
 ```powershell
@@ -63,7 +63,4 @@ Local `.env`, databases, uploads, dependencies, build output, and scratch audit 
 
 ## Documentation
 
-- **[PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)** — Canonical project handoff (architecture, status, decisions)
-- **[AGENTS.md](./AGENTS.md)** — Instructions for AI coding agents
-- **[Concept_Check_Coding_Prompt (11).md](<./Concept_Check_Coding_Prompt (11).md>)** — Full specification
-- **[Content specification](docs/content_specification.md)** — Module objectives, bank coverage, review checklist
+API documentation is hosted locally at `/docs` when the backend is running. Seeded concept resources and guides can be queried via `/v1/resources/{concept-slug}`.
