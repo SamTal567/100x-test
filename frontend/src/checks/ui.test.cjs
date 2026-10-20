@@ -27,6 +27,92 @@ const { AuthPage } = require('../pages/AuthPage.tsx')
 const { PromptView, EvaluationProgressLoader } = require('../pages/SessionPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
+test('tutor focus pairs an exact source quote with its own question for the current case', () => {
+  const { getTutorFocus } = require('../lib/learningEvidence.ts')
+  const attempts = [{ id: 'a', case_prompt_id: 'case-a', answer_text: 'I think RAM persists. It is safe.' },
+    { id: 'b', case_prompt_id: 'case-b', answer_text: 'The disk is permanent.' }]
+  const cards = [{ source_attempt_id: 'b', evidence_quote: 'The disk is permanent.', probe_question: 'Other question' },
+    { source_attempt_id: 'a', evidence_quote: 'ram persists.', probe_question: 'What survives a restart?' }]
+  const focus = getTutorFocus(cards, attempts, 'case-a')
+  assert.equal(focus.quote, 'RAM persists.')
+  assert.equal(focus.question, 'What survives a restart?')
+  const html = render(SessionTranscript, { focused: true, stage: 'investigate', focus,
+    messages: [{ id: 'q', role: 'tutor', stage: 'investigate', content: focus.question }] })
+  assert.match(html, /<blockquote>RAM persists\.<\/blockquote>/)
+  assert.ok(html.indexOf('RAM persists.') < html.indexOf('What survives a restart?'))
+  assert.equal((html.match(/What survives a restart\?/g) || []).length, 1)
+  assert.doesNotMatch(html, /Other question|The disk is permanent/)
+})
+
+test('missing and unmatched evidence never become fabricated learner quotations', () => {
+  const { getTutorFocus } = require('../lib/learningEvidence.ts')
+  for (const quote of [null, 'The answer the AI invented']) {
+    const focus = getTutorFocus([{ source_attempt_id: 'a', evidence_quote: quote, probe_question: 'Explain recovery.' }],
+      [{ id: 'a', case_prompt_id: 'case-a', answer_text: 'I save a file.' }], 'case-a')
+    assert.equal(focus.quote, null)
+    const html = render(SessionTranscript, { focused: true, stage: 'investigate', focus,
+      messages: [{ id: 'q', role: 'tutor', stage: 'investigate', content: focus.question }] })
+    assert.doesNotMatch(html, /<blockquote>|The answer the AI invented/)
+    assert.match(html, /No specific sentence was quoted/)
+  }
+  assert.equal(getTutorFocus([{ source_attempt_id: 'missing' }], [], 'case-a'), null)
+})
+
+test('closed report lists submitted stages and missing stages without claiming all were completed', () => {
+  const report = { session_id: 's', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive',
+    assessment_status: 'provisional', gaps: [], interventions_used: [], outcome_reason: 'Partial evidence.',
+    attempts: [{ id: 'a', stage: 'diagnostic', case_type: 'baseline', criteria: [], answer_text: 'Saved answer.' }] }
+  const html = render(ReportView, { report, onBack: () => {}, messages: [] })
+  assert.match(html, /Session saved/)
+  assert.match(html, /Baseline diagnostic/)
+  assert.match(html, /Answer submitted/)
+  assert.match(html, /Assessment unavailable/)
+  assert.match(html, /No revised answer submitted/)
+  assert.match(html, /No fresh-case answer submitted/)
+  assert.doesNotMatch(html, /You completed all 4|Learning Journey Completed/)
+})
+
+test('report distinguishes tutoring offered from a reply and a failed transfer from a missing attempt', () => {
+  const { reportStageEvidence } = require('../lib/learningEvidence.ts')
+  const report = { attempts: [{ stage: 'apply', case_type: 'transfer', processing_status: 'failed', criteria: [] }], interventions_used: [] }
+  const rows = reportStageEvidence(report, [{ stage: 'investigate', role: 'tutor' }])
+  assert.match(rows[1].detail, /no learner reply/)
+  assert.match(rows[3].detail, /Answer submitted.*Assessment unavailable/)
+  assert.doesNotMatch(rows[3].detail, /No fresh-case answer/)
+  const replied = reportStageEvidence(report, [{ stage: 'investigate', role: 'learner' }])
+  assert.match(replied[1].detail, /Learner reply recorded/)
+  assert.match(reportStageEvidence(report, undefined)[1].detail, /history unavailable/)
+})
+
+test('the actual tutoring workspace supplies the saved source sentence to the focused chat', async () => {
+  const harness = sessionHarness({ id: 's1', stage: 'investigate', version: 1, diagnostic_index: 1,
+    current_prompt: { id: 'case-a', case_type: 'baseline', scenario_text: 'Restart the server.' },
+    allowed_actions: ['answer_probe'],
+    attempts: [{ id: 'a', case_prompt_id: 'case-a', stage: 'diagnostic', answer_text: 'RAM persists.', criteria: [] }],
+    evidence_cards: [{ source_attempt_id: 'a', evidence_quote: 'RAM persists.', probe_question: 'What is lost?' }],
+    messages: [{ id: 'reply', role: 'learner', stage: 'investigate', content: 'Let me think.' },
+      { id: 'question', role: 'tutor', stage: 'investigate', content: 'What is lost?' }] })
+  try {
+    await harness.flush()
+    const html = harness.toHtml()
+    assert.match(html, /aria-label="Reasoning being investigated"/)
+    assert.match(html, /<blockquote>RAM persists\.<\/blockquote>/)
+    assert.match(html, /Initial follow-up/)
+  } finally { harness.close() }
+})
+
+test('guided practice is not a revision and assessed submissions do not imply demonstrated criteria', () => {
+  const { reportStageEvidence } = require('../lib/learningEvidence.ts')
+  const report = { interventions_used: [], attempts: [
+    { stage: 'investigate', case_type: 'guided_practice', criteria: [] },
+    { stage: 'apply', case_type: 'transfer', processing_status: 'complete', criteria: [{ met: false, rating: 'not_addressed' }] },
+  ] }
+  const rows = reportStageEvidence(report, [])
+  assert.match(rows[2].detail, /No revised answer submitted/)
+  assert.match(rows[3].detail, /Assessed against prepared criteria/)
+  assert.doesNotMatch(rows[3].detail, /demonstrated|passed|completed/i)
+})
+
 test('focused tutoring excludes diagnostic submissions while the report retains them', () => {
   const messages = [
     { id: 'baseline', stage: 'diagnostic', role: 'learner', content: 'Original diagnostic answer' },
@@ -1155,11 +1241,11 @@ test('report view presents celebratory completion banner, quick-jump tabs, and v
   }
   const html = render(ReportView, { report, onBack: () => {} })
 
-  // 1. Celebratory completion headline
+  // 1. Closed-session summary does not invent completed stages
   assert.match(html, /class="report-completion-banner/)
-  assert.match(html, /🎉/)
-  assert.match(html, /Learning Journey Completed!/)
-  assert.match(html, /You completed all 4 learning stages: Baseline Diagnostic, Tutoring Investigation, Supported Revision, and Fresh Transfer Challenge\./)
+  assert.match(html, /Session saved/)
+  assert.match(html, /No revised answer submitted/)
+  assert.doesNotMatch(html, /You completed all 4 learning stages|Learning Journey Completed!/)
 
   // 2. Secondary integrity badges retained
   assert.match(html, /Provisional AI assessment/)

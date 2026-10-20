@@ -4,6 +4,7 @@ import { ClozeExerciseView } from './ClozeExerciseView'
 import { supportLabel } from '../lib/sessionDrafts'
 import { SessionTranscript } from './SessionTranscript'
 import { QuestionPartFeedback } from './QuestionPartFeedback'
+import { reportStageEvidence } from '../lib/learningEvidence'
 import type { AttemptReport, Message, SessionDetail, SessionReport, SkillComparison, SkillEvidence } from '../types'
 
 export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }> = ({ attempt, anchor = true }) => <div className="attempt-card card-flat" id={anchor ? `attempt-${attempt.id}` : undefined}>
@@ -87,7 +88,7 @@ export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; histor
 export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; onOpenSession?: (id: string) => void; onRetryAssessments?: () => void; retryDisabled?: boolean; messages?: Message[]; initialPrintMode?: 'summary' | 'full' }> = ({ report, onBack, onOpenSession, onRetryAssessments, retryDisabled, messages, initialPrintMode }) => {
   const [printMode, setPrintMode] = useState<'summary' | 'full'>(initialPrintMode || 'summary')
   const summary = report.session_summary
-  const isCompleted = report.journey_status === 'completed' || report.stage === 'completed'
+  const isClosed = report.stage === 'completed' || report.stage === 'review'
 
   return <article className={`card report-card print-mode-${printMode}`} aria-labelledby="report-heading">
     {/* Accessible Sticky Quick-Jump Section Tabs */}
@@ -97,16 +98,17 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
       <a href="#report-evidence" className="quick-jump-tab">🔍 Evidence &amp; Appendix</a>
     </nav>
 
-    {/* Celebratory Positive Completion Banner */}
-    {isCompleted && (
+    {/* Closed sessions can include skipped stages or unavailable assessments. */}
+    {isClosed && (
       <div className="report-completion-banner card mb-4" role="status">
         <div className="report-completion-header">
-          <span className="completion-emoji" aria-hidden="true">🎉</span>
-          <h3 className="completion-title">Learning Journey Completed!</h3>
+          <h3 className="completion-title">Session saved</h3>
         </div>
         <p className="completion-text">
-          You completed all 4 learning stages: Baseline Diagnostic, Tutoring Investigation, Supported Revision, and Fresh Transfer Challenge. Criteria ratings below reflect evidence gathered and remain provisional pending instructor review.
+          This report records the work you submitted. Submitting an answer does not mean its criteria were demonstrated.
         </p>
+        <ul className="report-stage-evidence">{reportStageEvidence(report, messages).map(row => <li key={row.label}><strong>{row.label}:</strong> {row.detail}</li>)}</ul>
+        <p className="muted-note">{report.assessment_status === 'reviewed' ? 'Assessment judgments have been reviewed by a human.' : 'AI judgments remain provisional pending human review.'}</p>
       </div>
     )}
 

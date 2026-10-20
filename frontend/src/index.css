@@ -3389,3 +3389,12 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   line-height: 1.3;
   max-width: 320px;
 }
+
+/* Keep the original quoted reasoning paired with its neutral starting probe. */
+.tutor-focus { padding: var(--space-3); margin-bottom: var(--space-3); border-left: 3px solid var(--color-primary); background: var(--bg-surface-alt); overflow-wrap: anywhere; }
+.tutor-focus h3 { font-size: .9rem; margin: 0 0 var(--space-2); }
+.tutor-focus blockquote { margin: 0; white-space: pre-wrap; }
+.tutor-focus-question { margin-top: var(--space-3); }
+.tutor-focus-question > strong { display: block; font-size: .85rem; }
+.report-stage-evidence { padding-left: var(--space-5); margin: var(--space-3) 0; }
+.report-stage-evidence li { margin-bottom: var(--space-2); overflow-wrap: anywhere; }

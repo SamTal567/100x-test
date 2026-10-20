@@ -5,6 +5,7 @@ import { VoiceRecorder } from '../components/VoiceRecorder'
 import { PresetDiagramView } from '../components/PresetDiagramView'
 import { ClozeExerciseView } from '../components/ClozeExerciseView'
 import { SessionTranscript } from '../components/SessionTranscript'
+import { getTutorFocus } from '../lib/learningEvidence'
 import { AttemptView, ReportView } from '../components/ReportView'
 import { DiagnosticFeedback } from '../components/DiagnosticFeedback'
 import { HelpMenu } from '../components/HelpMenu'
@@ -620,6 +621,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
               messages={session.messages || []}
               stage={session.stage}
               focused
+              focus={getTutorFocus(session.evidence_cards || [], session.attempts || [], prompt?.id)}
               onOpenResource={confirmResourceOpening}
               disabled={actionsDisabled || !can('resource_opened')}
             />

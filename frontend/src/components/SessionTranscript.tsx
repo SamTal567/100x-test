@@ -2,8 +2,9 @@ import React, { useEffect, useRef } from 'react'
 import { MessageContent } from './MessageContent'
 import type { Message, SessionDetail } from '../types'
 import type { ResourceOpening } from './TrackedResourceLink'
+import type { TutorFocus } from '../lib/learningEvidence'
 
-export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDetail['stage']; onOpenResource?: ResourceOpening; disabled?: boolean; open?: boolean; focused?: boolean }> = ({ messages, stage, onOpenResource, disabled, open = false, focused = false }) => {
+export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDetail['stage']; onOpenResource?: ResourceOpening; disabled?: boolean; open?: boolean; focused?: boolean; focus?: TutorFocus | null }> = ({ messages, stage, onOpenResource, disabled, open = false, focused = false, focus }) => {
   const messagesRef = useRef<HTMLDivElement>(null)
   const followLatest = useRef(true)
   useEffect(() => {
@@ -17,6 +18,11 @@ export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDe
 
   const diagnosticMessages = isInvestigate ? messages.filter(m => m.stage === 'diagnostic') : []
   const activeMessages = isInvestigate && diagnosticMessages.length > 0 ? messages.filter(m => m.stage !== 'diagnostic') : messages
+  // The paired question remains visible in the focus card; its stored message
+  // still appears in full transcripts and reports.
+  const firstMessage = activeMessages[0]
+  const visibleMessages = focused && focus?.question && firstMessage?.role === 'tutor' && firstMessage.content === focus.question
+    && (!firstMessage.provider_status || firstMessage.provider_status === 'complete') ? activeMessages.slice(1) : activeMessages
 
   const renderMessage = (message: Message) => <div key={message.id} className={`chat-message message-${message.role}`}>
     <div className="message-role-label">{message.role === 'learner' ? 'You' : message.role === 'tutor' ? 'Tutor' : 'Session'}</div>
@@ -30,6 +36,12 @@ export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDe
       <h2 className="chat-title">{focused ? 'Chat with your tutor' : stage === 'investigate' || terminal ? 'Tutoring and clarification conversation' : 'Scenario clarifications'}</h2>
       {isInvestigate && <span className="chat-hint-note">{focused ? 'Reply to the question below. Ask for a hint whenever you need one.' : 'Discussing your reasoning with the tutor'}</span>}
     </div>
+    {focused && focus && <section className="tutor-focus" aria-label="Reasoning being investigated">
+      {focus.quote ? <><h3>Sentence we’re checking</h3><blockquote>{focus.quote}</blockquote></>
+        : <p className="muted-note">No specific sentence was quoted. The tutor is asking you to clarify your reasoning.</p>}
+      <p className="muted-note">This is a point to investigate, not a confirmed misconception.</p>
+      {focus.question && <div className="tutor-focus-question"><strong>Initial follow-up</strong><MessageContent content={focus.question} onOpenResource={onOpenResource} disabled={disabled} /></div>}
+    </section>}
     {!focused && diagnosticMessages.length > 0 && <details className="diagnostic-history-panel mb-3" open={open}>
       <summary className="diagnostic-history-summary">Earlier diagnostic submissions ({diagnosticMessages.length})</summary>
       <div className="chat-messages diagnostic-history-list mt-2">
@@ -40,7 +52,7 @@ export const SessionTranscript: React.FC<{ messages: Message[]; stage: SessionDe
       const node = event.currentTarget
       followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64
     }}>
-      {activeMessages.map(renderMessage)}
+      {visibleMessages.map(renderMessage)}
     </div>
   </section>
   return terminal ? <details className="saved-transcript earlier-session" open={open}><summary>Saved tutoring and clarification conversation</summary>{conversation}</details> : conversation
