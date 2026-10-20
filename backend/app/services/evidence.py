@@ -132,6 +132,10 @@ def resolve_question_part(question_parts, criterion_name, proposed_id=None):
     return selected
 
 
+def omission_explanation(criterion):
+    return f"You did not address this specific requirement: {criterion}. Other parts of your answer are assessed separately."
+
+
 def normalized_proposal(proposed, answer, result_status, summary="", question_parts=None, criterion_id=None):
     if proposed is None or result_status != "complete":
         msg = summary or "Assessment was unavailable or did not return this prepared criterion exactly once."
@@ -184,9 +188,9 @@ def normalized_proposal(proposed, answer, result_status, summary="", question_pa
         )
 
     if rating == "not_addressed":
-        missing_desc = part_desc or (f"address {criterion_id}" if criterion_id else "address this requirement")
-        if not explanation or not explanation.strip().startswith("You did not answer"):
-            explanation = f"You did not answer the part asking you to {missing_desc}."
+        missing_desc = criterion_id or part_desc or "this requirement"
+        # A criterion omission is not an omission of every sibling in its question part.
+        explanation = omission_explanation(missing_desc)
         action = next_action or (f"Explain how you would {missing_desc}." if part_desc else "State your reasoning on this point.")
         return NormalizedProposal(
             False, "not_addressed", "",

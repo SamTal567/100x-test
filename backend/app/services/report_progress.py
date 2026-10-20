@@ -1,5 +1,7 @@
 """Describe chronology from saved evidence; no model calls or mastery claims."""
 
+from app.services.criterion_equivalence import covers_criterion
+
 
 def revision_conflicts(before, after):
     """Flag changed same-criterion judgments, without diagnosing the learner."""
@@ -10,7 +12,7 @@ def revision_conflicts(before, after):
             and c.get('rating') == 'partially_demonstrated']
 
 
-def learning_progress(reports, expected_by_attempt, transfer_is_independent):
+def learning_progress(reports, expected_by_attempt, transfer_is_independent, concept_slug=""):
     stages = {stage: [a for a in reports if a.stage == stage and a.case_type not in ('practice', 'guided_practice')]
               for stage in ('diagnostic', 'investigate', 'apply')}
 
@@ -72,8 +74,9 @@ def learning_progress(reports, expected_by_attempt, transfer_is_independent):
             later.append(f"{label(skill)}: {'; '.join(evidence)}.")
         initial_targets = {c['criterion'] for c in rows('diagnostic')
                            if key(c) == skill and not demonstrated(c)}
-        checked_targets = {c['criterion'] for c in rows('apply') if key(c) == skill and demonstrated(c)}
-        unrechecked = initial_targets - checked_targets
+        unrechecked = {name for name in initial_targets if not any(
+            a.processing_status == 'complete' and covers_criterion(name, a.criteria, concept_slug)
+            for a in stages['apply'])}
         if transfer_met and transfer_is_independent and not unrechecked:
             continue
         if transfer_met and transfer_is_independent and unrechecked:

@@ -2,8 +2,9 @@
 from sqlalchemy import desc
 from app.db.models import Attempt, CasePrompt, Concept, CriterionAssessment, Gap, Intervention, Session
 from app.schemas import AttemptReport, GapReport, SessionReport
-from app.services.evidence import snapshot_case
+from app.services.evidence import snapshot_case, omission_explanation
 from app.services.report_progress import learning_progress
+from app.services.criterion_equivalence import covers_criterion
 
 
 def check_unprompted(criterion_name, skill_id, scenario_text, assumptions, rubric_criterion=None):
@@ -48,7 +49,7 @@ def attempt_reports(db, session):
                 "coverage": getattr(c, "coverage", None),
                 "issue_type": getattr(c, "issue_type", None),
                 "demonstrated_explanation": getattr(c, "demonstrated_explanation", None),
-                "explanation": getattr(c, "explanation", None),
+                "explanation": omission_explanation(c.criterion) if c.rating == "not_addressed" and c.status == "provisional" else getattr(c, "explanation", None),
                 "next_action": getattr(c, "next_action", None),
             })
         crit_list = [c for c in criteria if not (c.get("skill_id") or "").startswith("exercise:")]
@@ -147,6 +148,7 @@ def stage_summaries(reports, baseline_complete):
 
 def build_report(db, session, include_history=True):
     reports = attempt_reports(db, session)
+    concept_slug = db.get(Concept, session.concept_id).slug
     attempts = db.query(Attempt).filter_by(session_id=session.id).all()
     conceptual = [c for a in reports if a.stage != "practice" for c in a.criteria
         if not (c.get("skill_id") or "").startswith("exercise:")]
@@ -303,57 +305,20 @@ def build_report(db, session, include_history=True):
                     targets.append(c)
 
         if targets:
-            all_resolved = True
-            any_transfer_failure = False
-            all_transfer_demonstrated = True
-            transfer_resolved_attempt = None
-            revision_resolved_attempt = None
-
-            for t in targets:
-                t_crit = t.get("criterion")
-                t_skill = t.get("skill_id")
-
-                t_transfer_demonstrated = False
-                for a in transfer_attempts:
-                    for c in a.criteria:
-                        matches = bool(t_crit and c.get("criterion") == t_crit and (not t_skill or c.get("skill_id") == t_skill))
-                        if matches:
-                            if c.get("met") is False or c.get("rating") in ("partially_demonstrated", "not_addressed"):
-                                any_transfer_failure = True
-                            elif c.get("met") is True and c.get("rating") == "demonstrated":
-                                t_transfer_demonstrated = True
-                                transfer_resolved_attempt = a
-
-                t_revision_demonstrated = False
-                for a in revision_attempts:
-                    if a.id != g.source_attempt_id:
-                        for c in a.criteria:
-                            matches = bool(t_crit and c.get("criterion") == t_crit and (not t_skill or c.get("skill_id") == t_skill))
-                            if matches and c.get("met") is True and c.get("rating") == "demonstrated":
-                                t_revision_demonstrated = True
-                                revision_resolved_attempt = a
-
-                if not t_transfer_demonstrated:
-                    all_transfer_demonstrated = False
-
-                if not (t_transfer_demonstrated or t_revision_demonstrated):
-                    all_resolved = False
-
-            if any_transfer_failure:
-                addressed_id = None
-                addressed_stage = None
-            elif all_resolved:
-                if all_transfer_demonstrated and transfer_resolved_attempt:
-                    addressed_id = transfer_resolved_attempt.id
-                    if transfer_resolved_attempt.support_level == "independent":
-                        addressed_stage = "Unfamiliar case (independent)"
-                    elif transfer_resolved_attempt.support_level in ("unknown", "legacy_unknown"):
-                        addressed_stage = "Unfamiliar case (support unknown)"
-                    else:
-                        addressed_stage = "Unfamiliar case (supported)"
-                elif revision_resolved_attempt:
-                    addressed_id = revision_resolved_attempt.id
-                    addressed_stage = "Revised explanation (supported)"
+            def resolves(attempt):
+                return (attempt.id != g.source_attempt_id and attempt.processing_status == 'complete'
+                    and all(covers_criterion(t['criterion'], attempt.criteria, concept_slug) for t in targets))
+            # A single linked attempt must supply every component of a concern.
+            transfer_resolved = next((a for a in reversed(transfer_attempts) if resolves(a)), None)
+            revision_resolved = next((a for a in reversed(revision_attempts) if resolves(a)), None)
+            direct_failure = any(c.get('criterion') == t['criterion'] and c.get('met') is not True
+                for a in transfer_attempts for c in a.criteria for t in targets)
+            if not direct_failure and transfer_resolved:
+                addressed_id = transfer_resolved.id
+                label = 'independent' if transfer_resolved.support_level == 'independent' else 'support unknown' if transfer_resolved.support_level in ('unknown', 'legacy_unknown') else 'supported'
+                addressed_stage = f'Unfamiliar case ({label})'
+            elif not direct_failure and revision_resolved:
+                addressed_id, addressed_stage = revision_resolved.id, 'Revised explanation (supported)'
 
         gaps_out.append(GapReport(id=g.id, description=g.description, evidence_quote=g.evidence_quote,
             probe_text=g.probe_text, status=g.status, source_attempt_id=g.source_attempt_id,
@@ -556,7 +521,7 @@ def build_report(db, session, include_history=True):
     }
     personal_summary.update(learning_progress(reports,
         {a.id: (a.case_snapshot or {}).get("rubric", {}).get("criteria", []) for a in attempts},
-        transfer_is_independent))
+        transfer_is_independent, concept_slug))
     if session.baseline_analysis_status != "complete" and not reviewed:
         notice = "Initial gap analysis is incomplete or unavailable; saved criterion judgments remain separate evidence."
         personal_summary['assessment_notices'] = ' '.join(filter(None, [personal_summary.get('assessment_notices'), notice]))
@@ -634,7 +599,21 @@ def build_report(db, session, include_history=True):
                 "rating": rating,
             })
 
+    demonstrated_count = len(transfer_demonstrated)
+    conceptual_text = (f"Unfamiliar case: {demonstrated_count}/{expected_transfer_count} prepared conceptual criteria demonstrated "
+        + ("independently." if transfer_is_independent else "with recorded or unknown support.")) if transfer_attempts else "No unfamiliar-case conceptual answer submitted."
+    exercise_rows = [c for a in transfer_attempts for c in a.criteria if (c.get('skill_id') or '').startswith('exercise:')]
+    unanswered = sum(c.get('rating') == 'not_addressed' or c.get('met') is None for c in exercise_rows)
+    incorrect = sum(c.get('met') is False and c.get('rating') != 'not_addressed' for c in exercise_rows)
+    assessment_summary = {
+        'headline': f'{demonstrated_count}/{expected_transfer_count} CONCEPTUAL CRITERIA DEMONSTRATED' if transfer_attempts else 'CONCEPTUAL APPLICATION NOT ASSESSED',
+        'conceptual': conceptual_text,
+        'exercises': f'Unfamiliar-case selections: {unanswered} unanswered; {incorrect} incorrect; {sum(c.get("met") is True for c in exercise_rows)} correct.' if exercise_rows else 'No unfamiliar-case diagram/cloze selection was assessed.',
+        'analysis': 'Initial gap analysis completed.' if session.baseline_analysis_status == 'complete' else 'Initial gap analysis incomplete or unavailable; criterion judgments are separate.',
+    }
+
     session_summary = {
+        "assessment_summary": assessment_summary,
         "completion_reason": "journey_completed" if journey_completed else "ended_before_unfamiliar_submission"
             if session.stage in ("review", "completed") else "in_progress",
         "unfamiliar_case_summary": unfamiliar_summary,

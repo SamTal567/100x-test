@@ -134,16 +134,21 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
     <div className="report-header-banner" id="report-summary">
       <div className="report-badge-row">
         <span className={`outcome-status-badge outcome-${report.outcome}`}>
-          {report.outcome === 'no_gap' ? 'NO GAP IN TESTED CASES'
+          {summary?.assessment_summary?.headline || (report.outcome === 'no_gap' ? 'NO GAP IN TESTED CASES'
             : report.outcome === 'criteria_demonstrated' ? 'PREPARED CRITERIA DEMONSTRATED'
             : report.outcome === 'gap_found' ? 'CRITERIA NEEDING ATTENTION'
-            : 'ASSESSMENT INCONCLUSIVE'}
+            : 'ASSESSMENT INCONCLUSIVE')}
         </span>
         <span className={`badge ${report.assessment_status === 'reviewed' ? 'badge-reviewed' : 'badge-provisional'}`}>
           {report.assessment_status === 'reviewed' ? 'Human reviewed' : 'Provisional AI assessment'}
         </span>
       </div>
       <h2 id="report-heading" className="report-title">{report.concept_title} — Evidence report</h2>
+      {summary?.assessment_summary && <div aria-label="Separate assessment results">
+        <p><strong>Conceptual evidence:</strong> {summary.assessment_summary.conceptual}</p>
+        <p><strong>Diagram / cloze:</strong> {summary.assessment_summary.exercises}</p>
+        <p><strong>Initial analysis:</strong> {summary.assessment_summary.analysis}</p>
+      </div>}
       <p className="report-outcome-reason">{report.outcome_reason}</p>
     </div>
 

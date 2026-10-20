@@ -634,7 +634,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
                   <div className="progression-callout-text">
                     <h3 className="progression-callout-title">💡 Ready to update your answer?</h3>
                     <p className="muted-note">
-                      You've explored this concept with your tutor. Take what you learned and revise your baseline explanation!
+                      Chat replies stay in the conversation. Choose “Review and revise my answer” to submit a revised baseline explanation.
                     </p>
                   </div>
                   <button

@@ -66,6 +66,18 @@ test('report exposes inconsistent revision separately from unavailable assessmen
   assert.equal(supportLabel('after_help_unknown'), 'After tutoring (type not recorded)')
 })
 
+test('report separates successful concepts from an unanswered exercise and unavailable analysis', () => {
+  const report = { session_id: 'split', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive',
+    assessment_status: 'provisional', outcome_reason: 'Initial analysis unavailable.', attempts: [], gaps: [], interventions_used: [],
+    session_summary: { assessment_summary: { headline: '3/3 CONCEPTUAL CRITERIA DEMONSTRATED',
+      conceptual: '3/3 demonstrated independently.', exercises: '1 unanswered diagram.', analysis: 'Initial gap analysis unavailable.' } } }
+  const html=render(ReportView,{report})
+  assert.match(html,/3\/3 CONCEPTUAL CRITERIA DEMONSTRATED/)
+  assert.match(html,/1 unanswered diagram/)
+  assert.match(html,/Initial gap analysis unavailable/)
+  assert.doesNotMatch(html,/ASSESSMENT INCONCLUSIVE/)
+})
+
 test('compact skill table shows unavailable evidence and keeps detailed quotes in appendix', () => {
   const report = { session_id: 'compact', concept_title: 'Entities', stage: 'completed', outcome: 'inconclusive',
     assessment_status: 'provisional', outcome_reason: 'Partial evidence', attempts: [], gaps: [], interventions_used: [],
@@ -1349,7 +1361,8 @@ test('tutoring chat renders prominent revision callout banner and retains skip r
     const html = harness.toHtml()
     assert.match(html, /revision-progression-banner/)
     assert.match(html, /💡 Ready to update your answer\?/)
-    assert.match(html, /You(?:'|&#x27;)ve explored this concept with your tutor\. Take what you learned and revise your baseline explanation!/)
+    assert.match(html, /Chat replies stay in the conversation/);
+    assert.match(html, /to submit a revised baseline explanation/)
     assert.match(html, /Review and revise my answer →/)
     assert.match(html, /<details class="skip-revision-details/)
     assert.match(html, /Skip revision &amp; proceed to unfamiliar scenario/)

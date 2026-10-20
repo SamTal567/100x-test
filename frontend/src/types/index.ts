@@ -327,6 +327,7 @@ export interface ConcernCard {
 }
 
 export interface SessionSummary {
+  assessment_summary?: { headline: string; conceptual: string; exercises: string; analysis: string }
   personal_summary?: PersonalSummary
   concern_cards?: ConcernCard[]
   unfamiliar_case_summary?: string

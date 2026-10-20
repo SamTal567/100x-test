@@ -558,6 +558,9 @@ class SessionService:
         latest_revision = self.db.query(Attempt).filter_by(session_id=session.id, stage="investigate",
             case_prompt_id=case.id).order_by(Attempt.created_at.desc(), Attempt.id.desc()).first()
         teaching_context = {
+            "submission_state": {"current_message_kind": "conversation_reply", "revision_submitted": latest_revision is not None,
+                "saved_revision_attempt_id": latest_revision.id if latest_revision else None,
+                "next_action_label": "Review and revise my answer"},
             "revision_consistency": self._revision_conflicts(original, latest_revision),
             "latest_revision": {"attempt_id": latest_revision.id, "answer": latest_revision.answer_text} if latest_revision else None,
             "version": "2026-10-20.1", "case_id": snapshot.get("id"), "case_version": snapshot.get("version"),
