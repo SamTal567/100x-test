@@ -229,8 +229,17 @@ def build_report(db, session, include_history=True):
 
     if not complete:
         outcome = "inconclusive"
-        reason = ("The learning journey was completed, but some prepared criteria lack usable assessment evidence."
-            if journey_completed else "The session ended before the complete independent case sequence was submitted."
+        issues = []
+        if not full_criteria:
+            issues.append("some attempts have missing criterion rows, incomplete processing or unavailable frozen criteria")
+        if session.baseline_analysis_status != "complete" and not reviewed:
+            issues.append("initial gap analysis is incomplete or unavailable; this is separate from criterion judgments")
+        if any(c.get("rating") == "technical_failure" for c in all_rows):
+            issues.append("some criterion judgments failed technically")
+        if any(c.get("met") is None and c.get("rating") != "technical_failure" for c in all_rows):
+            issues.append("some criterion judgments need clarification")
+        reason = (("The submitted sequence is complete, but " + "; ".join(issues) + ".")
+            if journey_completed and issues else "The session ended before the complete independent case sequence was submitted."
             if session.stage in ("review", "completed") else "The learning journey is still in progress.")
         reason += " Saved answers remain available for review."
     elif transfer_unmet:
@@ -307,7 +316,7 @@ def build_report(db, session, include_history=True):
                 t_transfer_demonstrated = False
                 for a in transfer_attempts:
                     for c in a.criteria:
-                        matches = (t_skill and c.get("skill_id") == t_skill) or (t_crit and c.get("criterion") == t_crit)
+                        matches = bool(t_crit and c.get("criterion") == t_crit and (not t_skill or c.get("skill_id") == t_skill))
                         if matches:
                             if c.get("met") is False or c.get("rating") in ("partially_demonstrated", "not_addressed"):
                                 any_transfer_failure = True
@@ -319,7 +328,7 @@ def build_report(db, session, include_history=True):
                 for a in revision_attempts:
                     if a.id != g.source_attempt_id:
                         for c in a.criteria:
-                            matches = (t_skill and c.get("skill_id") == t_skill) or (t_crit and c.get("criterion") == t_crit)
+                            matches = bool(t_crit and c.get("criterion") == t_crit and (not t_skill or c.get("skill_id") == t_skill))
                             if matches and c.get("met") is True and c.get("rating") == "demonstrated":
                                 t_revision_demonstrated = True
                                 revision_resolved_attempt = a
@@ -548,6 +557,13 @@ def build_report(db, session, include_history=True):
     personal_summary.update(learning_progress(reports,
         {a.id: (a.case_snapshot or {}).get("rubric", {}).get("criteria", []) for a in attempts},
         transfer_is_independent))
+    if session.baseline_analysis_status != "complete" and not reviewed:
+        notice = "Initial gap analysis is incomplete or unavailable; saved criterion judgments remain separate evidence."
+        personal_summary['assessment_notices'] = ' '.join(filter(None, [personal_summary.get('assessment_notices'), notice]))
+        step = "Retry the unavailable initial gap analysis or ask for human review of the saved evidence."
+        personal_summary['next_steps'] = [s for s in personal_summary['next_steps'] if not s.startswith('No additional remediation')]
+        personal_summary['next_steps'].append(step)
+        personal_summary['recommended_next_step'] = ' '.join(personal_summary['next_steps'])
 
     # Build concern_cards
     # For each significant concern (unmet, partial, or unclear criteria in baseline or transfer):

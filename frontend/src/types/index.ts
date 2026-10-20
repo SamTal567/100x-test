@@ -304,11 +304,13 @@ export interface PersonalSummary {
   changed_after_help: string
   needs_independent_checking: string
   recommended_next_step: string
+  starting_strengths?: string
   initial_difficulties?: string
   later_evidence?: string
   remaining_gaps?: string
   assessment_notices?: string
   revision_note?: string
+  revision_consistency_note?: string
   next_steps?: string[]
 }
 

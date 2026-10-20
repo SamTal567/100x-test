@@ -1,5 +1,7 @@
 """Server-owned learning flow, durable turns, and prepared evidence assessment."""
 from __future__ import annotations
+
+from app.services.report_progress import revision_conflicts
 import hashlib
 import json
 import threading
@@ -158,7 +160,7 @@ class SessionService:
             types.add("resource_used")
         if any(i.intervention_type == "resource" for i in interventions):
             types.add("resource")
-        for kind, label in [("teaching", "after_teaching"), ("hint", "after_hint"),
+        for kind, label in [("teaching", "after_teaching"), ("tutoring_unknown", "after_help_unknown"), ("hint", "after_hint"),
                             ("practice", "after_practice"), ("resource_used", "after_resource"), ("resource", "after_help_offered"),
                             ("clarification", "after_clarification")]:
             if kind in types:
@@ -260,7 +262,15 @@ class SessionService:
             elif session.stage == "investigate":
                 if turn.action == "submit_answer":
                     await self._assess_attempt(self._attempt)
-                    self._to_apply(session, messages)
+                    original = self.db.get(Attempt, self._gap(session).source_attempt_id) if self._gap(session) else None
+                    conflicts = self._revision_conflicts(original, self._attempt)
+                    if conflicts:
+                        criterion = conflicts[0]['criterion']
+                        self._message(session, messages, f"Your revision is saved, but its assessment is inconsistent with your earlier reasoning about '{criterion}'. "
+                            "This may be an interpretation or assessment issue, not a confirmed misconception. "
+                            "Could you clarify what you intended in the revised answer? You can return to chat, revise again, or choose to proceed to the unfamiliar case.")
+                    else:
+                        self._to_apply(session, messages)
                 elif turn.action == "submit_practice":
                     await self._assess_attempt(self._attempt)
                     source = self._source_case(session)
@@ -511,6 +521,18 @@ class SessionService:
         self.db.flush()
         return item
 
+    @staticmethod
+    def _revision_conflicts(original, revised):
+        if not original or not revised or not original.case_snapshot or not revised.case_snapshot:
+            return []
+        if original.case_prompt_id != revised.case_prompt_id or original.rubric_version != revised.rubric_version:
+            return []
+        if original.case_snapshot.get('version') != revised.case_snapshot.get('version'):
+            return []
+        fields = ('criterion', 'skill_id', 'rating', 'met', 'issue_type', 'evidence')
+        return revision_conflicts([{k: getattr(c, k) for k in fields} for c in original.criterion_assessments],
+                                  [{k: getattr(c, k) for k in fields} for c in revised.criterion_assessments])
+
     async def _tutor(self, session, turn, messages):
         gap, case = self._gap(session), self.db.get(CasePrompt, session.current_prompt_id)
         original = self.db.get(Attempt, gap.source_attempt_id) if gap else None
@@ -533,8 +555,12 @@ class SessionService:
             "next_action": getattr(c, "next_action", None),
         } for c in (original.criterion_assessments if original else [])]
         same_case = bool(original and original.case_prompt_id == case.id)
+        latest_revision = self.db.query(Attempt).filter_by(session_id=session.id, stage="investigate",
+            case_prompt_id=case.id).order_by(Attempt.created_at.desc(), Attempt.id.desc()).first()
         teaching_context = {
-            "version": "2026-10-19.1", "case_id": snapshot.get("id"), "case_version": snapshot.get("version"),
+            "revision_consistency": self._revision_conflicts(original, latest_revision),
+            "latest_revision": {"attempt_id": latest_revision.id, "answer": latest_revision.answer_text} if latest_revision else None,
+            "version": "2026-10-20.1", "case_id": snapshot.get("id"), "case_version": snapshot.get("version"),
             "rubric_version": prepared.get("version"), "content_review_status": snapshot.get("review_status", "unreviewed"),
             "source_provenance": "frozen_attempt" if original and original.case_snapshot and original.case_prompt_id == case.id else "current_prepared_case",
             "reference_answer": prepared.get("reference_answer", ""), "criteria": prepared.get("criteria", []),
@@ -561,8 +587,12 @@ class SessionService:
         if reply.diagram_ascii and reply.diagram_ascii not in text:
             text += "\n\n" + reply.diagram_ascii
         self._message(session, messages, text, reply.status)
-        kind = {"request_hint": "hint", "request_teaching": "teaching", "correct_ai": "correction", "answer_probe": "follow_up"}.get(turn.action, "follow_up")
-        self._intervention(session, kind, kind.replace("_", " ").capitalize(), text,
+        actual = getattr(reply, "assistance_kind", "unknown")
+        kind = actual if actual in {"hint", "follow_up", "teaching"} else "tutoring_unknown"
+        if turn.action == "request_teaching":
+            kind = "teaching"  # Never understate an explicit request for teaching.
+        title = f"{kind.replace('_', ' ').capitalize()} (requested: {turn.action.replace('_', ' ')})"
+        self._intervention(session, kind, title, text,
             "delivered" if reply.status == "complete" else reply.status)
         if gap and turn.action == "correct_ai":
             gap.status = "challenged"

@@ -154,6 +154,7 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
         <div className="summary-point-card personal-summary-card">
           <span className="summary-point-label">What you demonstrated</span>
           <p>{summary.personal_summary.demonstrated}</p>
+          {summary.personal_summary.starting_strengths && <p className="muted-note">{summary.personal_summary.starting_strengths}</p>}
         </div>
         <div className="summary-point-card personal-summary-card">
           <span className="summary-point-label">{summary.personal_summary.initial_difficulties ? 'Initial difficulties' : 'Assessment findings'}</span>
@@ -162,6 +163,7 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
         <div className="summary-point-card personal-summary-card">
           <span className="summary-point-label">Later evidence</span>
           <p>{summary.personal_summary.later_evidence || summary.personal_summary.changed_after_help}</p>
+          {summary.personal_summary.revision_consistency_note && <p className="report-assessment-notice"><strong>Revision needs clarification:</strong> {summary.personal_summary.revision_consistency_note}</p>}
           {summary.personal_summary.revision_note && <p className="muted-note">{summary.personal_summary.revision_note}</p>}
         </div>
         <div className="summary-point-card personal-summary-card">

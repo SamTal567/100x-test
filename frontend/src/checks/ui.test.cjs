@@ -49,6 +49,23 @@ test('report separates initial difficulties, later evidence and current gaps wit
   assert.match(html, /The revision is supported evidence/)
 })
 
+test('report exposes inconsistent revision separately from unavailable assessment', () => {
+  const report = { session_id: 'consistency', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive',
+    assessment_status: 'provisional', outcome_reason: 'Initial gap analysis is incomplete.', attempts: [], gaps: [], interventions_used: [],
+    session_summary: { personal_summary: {
+      demonstrated: 'Some starting reasoning was correct.', starting_strengths: 'Before tutoring, RAM volatility was demonstrated.', missing_or_incorrect: 'Initial omission.',
+      changed_after_help: 'Revision submitted.', needs_independent_checking: 'Needs a recheck.', recommended_next_step: 'Clarify.',
+      revision_consistency_note: 'The revision is inconsistent with earlier reasoning; clarify the intended meaning.',
+      assessment_notices: 'Initial gap analysis is incomplete; criterion judgments remain separate.',
+    } } }
+  const html = render(ReportView, { report })
+  assert.match(html, /Before tutoring, RAM volatility was demonstrated/);
+  assert.match(html, /Revision needs clarification:/)
+  assert.match(html, /clarify the intended meaning/)
+  assert.match(html, /Assessment notice:/)
+  assert.equal(supportLabel('after_help_unknown'), 'After tutoring (type not recorded)')
+})
+
 test('compact skill table shows unavailable evidence and keeps detailed quotes in appendix', () => {
   const report = { session_id: 'compact', concept_title: 'Entities', stage: 'completed', outcome: 'inconclusive',
     assessment_status: 'provisional', outcome_reason: 'Partial evidence', attempts: [], gaps: [], interventions_used: [],

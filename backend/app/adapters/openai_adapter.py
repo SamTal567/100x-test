@@ -78,6 +78,7 @@ class TutorResponse(BaseModel):
     message: str
     diagram_ascii: Optional[str] = None
     action_type: str = "teaching"
+    assistance_kind: Literal["hint", "follow_up", "teaching", "unknown"] = "unknown"
     status: Literal["complete", "unavailable", "error"] = "complete"
 
 
@@ -295,6 +296,12 @@ class OpenAIAdapter:
                 "For an omitted part, the explanation must say 'You did not answer the part asking you to ...'\n"
                 "3. If evidence is ambiguous, set met=null, rating='ambiguous_needs_clarification', issue_type='ambiguous_wording_or_interpretation'.\n"
                 "4. Accept equivalent correct reasoning; do not penalize brevity or speech artifacts when reasoning is sound.\n"
+                "Assess the mechanism expressed, not whether it repeats reference vocabulary. Do not require terms such as "
+                "'authoritative' or 'durable' when the same relationship is already explained correctly in ordinary language. "
+                "For example, 'the cache reloads the updated 900 value from the database' can demonstrate the reload path "
+                "and which source supplies the current value. It does not by itself explain why the old RAM cache is lost; "
+                "assess that separate criterion only from its own evidence. Do not mark an existing explanation omitted "
+                "just because it lacks a keyword, and do not award unrelated criteria from the same quote.\n"
                 "Return every supplied criterion verbatim once. Return ONLY valid JSON."
             )
 
@@ -499,7 +506,16 @@ class OpenAIAdapter:
                 "Discuss only the current case or prepared practice. Never invent a held-back assessment key.\n"
                 "13. Help history distinguishes an offer, opening and self-reported completion. None proves the learner read or understood it. "
                 "Use actual earlier help for continuity; do not silently treat a supported revision as independent evidence.\n"
-                "Keep responses under 180 words."
+                "14. If the learner's latest claim or revised answer appears inconsistent with earlier reasoning, "
+                "quote the two relevant statements and ask which meaning they intended before concluding a misconception. "
+                "Treat supplied revision_consistency evidence as provisional judgments to clarify, never a diagnosis. "
+                "When a learner answers a probe correctly, acknowledge it briefly and invite their own revision; "
+                "do not automatically supply the rest of the solution.\n"
+                "Return ONLY JSON with message (your learner-facing text) and assistance_kind. "
+                "Set assistance_kind from the content you actually provide: 'teaching' if you give a direct explanation, "
+                "correct solution or correct diagram choice; 'hint' for a clue without the solution; 'follow_up' for a "
+                "neutral question or acknowledgment without a solution. If uncertain use 'unknown'. "
+                "The clicked action does not determine the assistance kind. Keep the message under 160 words."
             )
 
             history_str = "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in history[-24:]])[-18000:]
@@ -522,13 +538,24 @@ class OpenAIAdapter:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=400,
+                max_tokens=500,
+                json_mode=True,
             )
 
-            reply = response.choices[0].message.content.strip()
+            reply = (response.choices[0].message.content or "").strip()
             if not reply:
                 raise ValueError("Provider returned an empty tutor message")
-            return TutorResponse(message=reply, action_type=action, status="complete")
+            # Legacy/plain replies remain usable but never acquire invented help provenance.
+            assistance_kind = "unknown"
+            if reply.startswith("{"):
+                data = json.loads(reply)
+                reply = data.get("message")
+                if not isinstance(reply, str) or not reply.strip():
+                    raise ValueError("Tutor JSON has no message")
+                kind = data.get("assistance_kind")
+                if kind in {"hint", "follow_up", "teaching"}:
+                    assistance_kind = kind
+            return TutorResponse(message=reply.strip(), action_type=action, assistance_kind=assistance_kind, status="complete")
 
         except Exception as e:
             logger.error("OpenAI tutor_conversation failed: %s", type(e).__name__)

@@ -1,6 +1,15 @@
 """Describe chronology from saved evidence; no model calls or mastery claims."""
 
 
+def revision_conflicts(before, after):
+    """Flag changed same-criterion judgments, without diagnosing the learner."""
+    earlier = {c['criterion']: c for c in before if c.get('met') is True and c.get('rating') == 'demonstrated'}
+    return [c for c in after if c.get('criterion') in earlier
+            and c.get('skill_id') == earlier[c['criterion']].get('skill_id')
+            and c.get('met') is False and c.get('issue_type') == 'incorrect_claim'
+            and c.get('rating') == 'partially_demonstrated']
+
+
 def learning_progress(reports, expected_by_attempt, transfer_is_independent):
     stages = {stage: [a for a in reports if a.stage == stage and a.case_type not in ('practice', 'guided_practice')]
               for stage in ('diagnostic', 'investigate', 'apply')}
@@ -36,6 +45,9 @@ def learning_progress(reports, expected_by_attempt, transfer_is_independent):
             relevant.extend(actual)
         return bool(relevant)
 
+    strengths = sorted({c['criterion'] for c in rows('diagnostic') if demonstrated(c)})
+    starting_strengths = ('Before tutoring, baseline evidence demonstrated: ' + '; '.join(strengths) + '.'
+                          if strengths else 'No initial strength was established by the available criterion judgments.')
     initial_skills = difficulties('diagnostic')
     initial_parts = []
     for rating, heading in [('not_addressed', 'Initially omitted'), ('partially_demonstrated', 'Initially incomplete'),
@@ -58,7 +70,15 @@ def learning_progress(reports, expected_by_attempt, transfer_is_independent):
                             else 'demonstrated on the unfamiliar case with support or unknown support provenance')
         if evidence:
             later.append(f"{label(skill)}: {'; '.join(evidence)}.")
-        if transfer_met and transfer_is_independent:
+        initial_targets = {c['criterion'] for c in rows('diagnostic')
+                           if key(c) == skill and not demonstrated(c)}
+        checked_targets = {c['criterion'] for c in rows('apply') if key(c) == skill and demonstrated(c)}
+        unrechecked = initial_targets - checked_targets
+        if transfer_met and transfer_is_independent and not unrechecked:
+            continue
+        if transfer_met and transfer_is_independent and unrechecked:
+            remaining.append(f"{label(skill)} (later skill evidence exists; original requirement not independently rechecked: {', '.join(sorted(unrechecked))})")
+            needs_case.add(skill)
             continue
         if skill in difficulties('apply'):
             remaining.append(f'{label(skill)} (still incomplete or unclear on the unfamiliar case)')
@@ -84,14 +104,32 @@ def learning_progress(reports, expected_by_attempt, transfer_is_independent):
     if not steps:
         steps.append('No additional remediation is indicated by these tested criteria. A short session does not establish retained learning or mastery.')
 
+    conflicts = []
+    latest_revisions = {a.case_prompt_id: a for a in stages['investigate']}
+    for original in stages['diagnostic']:
+        revised = latest_revisions.get(original.case_prompt_id)
+        if revised and revised.case_version == original.case_version and revised.rubric_version == original.rubric_version:
+            conflicts.extend(revision_conflicts(original.criteria, revised.criteria))
+    consistency_note = ''
+    if conflicts:
+        names = ', '.join(dict.fromkeys(c['criterion'] for c in conflicts))
+        consistency_note = (f'The submitted revision is inconsistent with earlier demonstrated reasoning for: {names}. '
+            'This is a difference between saved assessments, not proof of lost understanding. Review the answers and clarify the intended meaning.')
+        remaining.append(f'Revision interpretation needs clarification: {names}')
+        steps.insert(0, f'Clarify the inconsistent revision for {names}; compare the saved original and revised answers.')
+        if any(step.startswith('No additional remediation') for step in steps):
+            steps = [step for step in steps if not step.startswith('No additional remediation')]
+
     revision_note = ('The revised answer is supported evidence. Its correctness or similarity to a tutor explanation does not establish independent learning; use unfamiliar-case evidence separately.'
                      if stages['investigate'] else 'No revised answer was submitted.')
     return {
+        'starting_strengths': starting_strengths,
         'initial_difficulties': initial,
         'later_evidence': ' '.join(later) if later else ('No matching later evidence has yet demonstrated these initially uncertain skills.' if initial_skills else 'No initial difficulty required a later comparison.'),
         'remaining_gaps': '; '.join(remaining) + '.' if remaining else 'No unresolved reasoning difficulty is established by the available tested evidence.',
         'assessment_notices': notices,
         'revision_note': revision_note,
+        'revision_consistency_note': consistency_note,
         'next_steps': steps,
         # Historical compatibility fields remain explicitly historical.
         'missing_or_incorrect': initial,
