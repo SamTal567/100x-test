@@ -28,12 +28,97 @@ type Action = TurnRequest['action']
 type AnswerPayload = Pick<TurnRequest, 'text' | 'diagram_state' | 'cloze_state' | 'input_mode' | 'transcription_id' | 'transcription_segments' | 'resource_id'>
 type Send = (action: Action, payload?: AnswerPayload) => Promise<boolean>
 
-const PromptView: React.FC<{ prompt: CasePrompt; children?: React.ReactNode }> = ({ prompt, children }) => <section className="scenario-card" aria-label="Current scenario">
-  <div className="scenario-card-header"><span className="scenario-label-badge">{prompt.case_type.replaceAll('_', ' ')} case</span><span className="badge badge-provisional">{prompt.review_status === 'reviewed' ? 'Human reviewed content' : 'Authored content — awaiting human review'}</span></div>
-  <div className="scenario-text" style={{ whiteSpace: 'pre-wrap' }}>{prompt.scenario_text}</div>
-  {prompt.assumptions?.length ? <div className="scenario-assumptions"><strong>Stated assumptions</strong><ul>{prompt.assumptions.map((assumption, index) => <li key={index}>{assumption}</li>)}</ul></div> : null}
-  {children}
-</section>
+function parseScenarioPrompt(text: string): { background: string; task: string | null } {
+  if (!text) return { background: '', task: null }
+  const match = text.match(/(?:^|\n+)(?:Your\s+Task|Task):\s*/i)
+  if (!match || match.index === undefined) {
+    return { background: text, task: null }
+  }
+  const background = text.slice(0, match.index).trim()
+  const task = text.slice(match.index + match[0].length).trim()
+  return { background, task }
+}
+
+export const PromptView: React.FC<{ prompt: CasePrompt; children?: React.ReactNode }> = ({ prompt, children }) => {
+  const { background, task } = parseScenarioPrompt(prompt.scenario_text)
+  return (
+    <section className="scenario-card" aria-label="Current scenario">
+      <div className="scenario-card-header">
+        <span className="scenario-label-badge">{prompt.case_type.replaceAll('_', ' ')} case</span>
+        <span className="badge badge-provisional">
+          {prompt.review_status === 'reviewed' ? 'Human reviewed content' : 'Authored content — awaiting human review'}
+        </span>
+      </div>
+      {background ? <div className="scenario-text" style={{ whiteSpace: 'pre-wrap' }}>{background}</div> : null}
+      {task ? (
+        <div className="task-accent-card" role="region" aria-label="Your task">
+          <div className="task-accent-header">
+            <span className="task-accent-icon" aria-hidden="true">🎯</span>
+            <strong className="task-accent-title">Your Task</strong>
+          </div>
+          <div className="task-accent-body">{task}</div>
+        </div>
+      ) : (
+        !background && <div className="scenario-text" style={{ whiteSpace: 'pre-wrap' }}>{prompt.scenario_text}</div>
+      )}
+      {prompt.assumptions?.length ? (
+        <div className="scenario-assumptions scenario-assumptions-card" role="region" aria-label="Stated assumptions">
+          <div className="scenario-assumptions-header">
+            <strong>Stated assumptions</strong>
+          </div>
+          <ul className="scenario-assumptions-list">
+            {prompt.assumptions.map((assumption, index) => (
+              <li key={index} className="scenario-assumption-item">
+                <span className="assumption-checkmark" aria-hidden="true">✓</span>
+                <span>{assumption}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {children}
+    </section>
+  )
+}
+
+export const EvaluationProgressLoader: React.FC = () => {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const start = Date.now()
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000))
+    }, 500)
+    return () => clearInterval(timer)
+  }, [])
+
+  const activeStep = elapsed >= 12 ? 3 : elapsed >= 4 ? 2 : 1
+
+  return (
+    <div className="card evaluation-loader-card mb-4" role="status" aria-live="polite">
+      <div className="evaluation-loader-header">
+        <span className="spinner-inline" />
+        <strong className="evaluation-loader-title">Evaluating your response...</strong>
+      </div>
+      <div className="evaluation-steps-list">
+        <div className={`evaluation-step ${activeStep > 1 ? 'completed' : activeStep === 1 ? 'active' : 'upcoming'}`}>
+          <span className="step-badge">{activeStep > 1 ? '✓' : '1'}</span>
+          <span className="step-label">Saving your draft securely...</span>
+        </div>
+        <div className={`evaluation-step ${activeStep > 2 ? 'completed' : activeStep === 2 ? 'active' : 'upcoming'}`}>
+          <span className="step-badge">{activeStep > 2 ? '✓' : '2'}</span>
+          <span className="step-label">AI Tutor is analyzing your explanation &amp; criteria...</span>
+        </div>
+        <div className={`evaluation-step ${activeStep === 3 ? 'active' : 'upcoming'}`}>
+          <span className="step-badge">3</span>
+          <span className="step-label">Synthesizing personalized feedback and follow-up probes...</span>
+        </div>
+      </div>
+      <div className="evaluation-pulse-bar" aria-hidden="true">
+        <div className="evaluation-pulse-fill" />
+      </div>
+    </div>
+  )
+}
 
 // Keyed by session + prompt + action: practice cannot replace the revision draft.
 const AnswerComposer: React.FC<{
@@ -68,7 +153,21 @@ const AnswerComposer: React.FC<{
     <p id={`${inputId}-help`} className="muted-note">{action === 'answer_probe' ? 'Send a reply or answer the follow-up. This keeps the tutoring conversation open.' : exercises ? 'Explain your reasoning in words as well as making any diagram or blank selections.' : action === 'clarify' ? 'Ask about the scenario assumptions. A clarification is recorded separately from your answer.' : action === 'correct_ai' ? 'Point out the specific part of your answer the tutor misunderstood.' : 'Explain the mechanism and why it applies to this case.'}</p>
     {voiceOpen && !disabled && <VoiceRecorder sessionId={sessionId} existingText={draft.text} onConfirmedTranscript={(text, transcriptionId, mode) => { update(applyDictation(draft, text, transcriptionId, mode)); setVoiceOpen(false) }} onCancel={() => setVoiceOpen(false)} />}
     {voiceOpen && <p className="muted-note">Add or cancel the recording before submitting your answer.</p>}
-    <div className="answer-actions-bar"><div className="secondary-inputs-group">{voice && !voiceOpen && <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => setVoiceOpen(true)}>🎙️ {draft.text.trim() ? 'Add more by voice' : 'Dictate'}</button>}</div><button type="submit" className="btn btn-primary" disabled={disabled || voiceOpen || !draft.text.trim()}>{submitLabel}</button></div>
+    <div className="answer-actions-bar">
+      <div className="secondary-inputs-group">
+        {voice && !voiceOpen && (
+          <div className="voice-input-control">
+            <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => setVoiceOpen(true)}>
+              🎙️ {draft.text.trim() ? 'Add more by voice' : 'Dictate'}
+            </button>
+            <span className="voice-dictation-helper-tip">
+              Speak naturally. Dictation appends to your draft so you can review and edit before sending.
+            </span>
+          </div>
+        )}
+      </div>
+      <button type="submit" className="btn btn-primary" disabled={disabled || voiceOpen || !draft.text.trim()}>{submitLabel}</button>
+    </div>
   </form>
 }
 
@@ -234,12 +333,13 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResourceError(null)}>Dismiss</button>
       </div>
     )}
-    {pending && <div className="card recovery-card mb-4" role="status">
+    {submitting && <EvaluationProgressLoader />}
+    {pending && !submitting && <div className="card recovery-card mb-4" role="status">
       <strong>Saved request awaiting confirmation</strong>
-      <p>{submitting ? 'Saving and processing your request…' : 'Retry resumes this exact request and preserves its original submission identifier.'}</p>
+      <p>Retry resumes this exact request and preserves its original submission identifier.</p>
       <div className="action-wrap">
-        <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => execute(pending)}>Retry saved request</button>
-        {terminal && can('finish_session') && session.processing_status === 'failed' && <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => send('finish_session')}>Finish partial report</button>}
+        <button type="button" className="btn btn-secondary" onClick={() => execute(pending)}>Retry saved request</button>
+        {terminal && can('finish_session') && session.processing_status === 'failed' && <button type="button" className="btn btn-secondary" onClick={() => send('finish_session')}>Finish partial report</button>}
       </div>
     </div>}
 
@@ -526,6 +626,26 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
           </div>
 
           <div className="tutoring-composer-area mt-3">
+            {session.messages && session.messages.length > 0 && (
+              <div className="card revision-progression-banner mb-3" role="region" aria-label="Ready to revise">
+                <div className="progression-callout-content">
+                  <div className="progression-callout-text">
+                    <h3 className="progression-callout-title">💡 Ready to update your answer?</h3>
+                    <p className="muted-note">
+                      You've explored this concept with your tutor. Take what you learned and revise your baseline explanation!
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={actionsDisabled}
+                    onClick={() => changeTutoringView('revision')}
+                  >
+                    Review and revise my answer →
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="help-controls-bar mb-2">
               {can('request_hint') && (
                 <button
@@ -584,43 +704,24 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
           </div>
 
           </div>
-          <details className="tutor-next-step">
-            <summary>Ready for the next step?</summary>
-            <div className="progression-callout-content">
-              <div>
-                <h3 className="progression-callout-title">Ready to revise your answer?</h3>
+          {can('continue') && (
+            <details className="skip-revision-details mt-3">
+              <summary className="text-sm text-muted">Skip revision &amp; proceed to unfamiliar scenario</summary>
+              <div className="skip-revision-content p-2 mt-1">
                 <p className="muted-note">
-                  When you have explored the concept with the tutor, update your baseline explanation to demonstrate what you learned.
+                  Skipping revision leaves your initial baseline answer as the only evidence for the original case. You will move directly to an unfamiliar case challenge.
                 </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={actionsDisabled}
+                  onClick={() => send('continue')}
+                >
+                  Skip revision &amp; proceed to unfamiliar case →
+                </button>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={actionsDisabled}
-                onClick={() => changeTutoringView('revision')}
-              >
-                Review and revise my answer →
-              </button>
-            </div>
-            {can('continue') && (
-              <details className="skip-revision-details mt-2">
-                <summary className="text-sm text-muted">Skip revision and go directly to unfamiliar scenario</summary>
-                <div className="skip-revision-content p-2 mt-1">
-                  <p className="muted-note">
-                    Skipping revision leaves your initial baseline answer as the only evidence for the original case. You will move directly to an unfamiliar case challenge.
-                  </p>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    disabled={actionsDisabled}
-                    onClick={() => send('continue')}
-                  >
-                    Skip revision & proceed to unfamiliar case →
-                  </button>
-                </div>
-              </details>
-            )}
-          </details>
+            </details>
+          )}
         </div>
       )}
 
@@ -628,6 +729,12 @@ export const SessionPage: React.FC<SessionPageProps> = ({ sessionId, onBackToCat
       {session.stage === 'apply' && (
         <div className="unfamiliar-case-workspace">
           <div className="unfamiliar-case-banner card mb-3">
+            <div className="concept-focus-anchor mb-2">
+              <span className="concept-focus-pill">Concept Focus: {session.concept_title || 'Backend Reasoning'}</span>
+              <p className="concept-focus-note text-sm">
+                Apply the core principles you explored in the earlier cases to this new scenario. Answer independently without hints.
+              </p>
+            </div>
             <span className="scenario-label-badge">Unfamiliar Transfer Case</span>
             <h2>Apply your understanding to a new scenario</h2>
             <p className="muted-note">

@@ -44,6 +44,20 @@ export const AttemptView: React.FC<{ attempt: AttemptReport; anchor?: boolean }>
   </div>)}</div>
 </div>
 
+const getSkillRatingVariant = (rating?: string | null, met?: boolean | null): 'green' | 'yellow' | 'gray' => {
+  const normalized = (rating || '').toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized.includes('partially') || normalized.includes('support')) return 'yellow'
+  if (normalized === 'demonstrated' || met === true) return 'green'
+  if (normalized === 'not_addressed' || normalized === 'unmet' || met === false) return 'gray'
+  return 'gray'
+}
+
+export const SkillStatusPill: React.FC<{ rating?: string | null; met?: boolean | null }> = ({ rating, met }) => {
+  const variant = getSkillRatingVariant(rating, met)
+  const displayLabel = rating ? rating.replaceAll('_', ' ') : (met === true ? 'Demonstrated' : met === false ? 'Unmet' : 'Uncertain')
+  return <span className={`skill-status-pill pill-${variant}`}>{displayLabel}</span>
+}
+
 const STAGE_EMPTY_REASONS: Record<string, string> = {
   Baseline: 'Not asked in this case',
   'Revision with support': 'Not attempted (revision skipped)',
@@ -52,7 +66,7 @@ const STAGE_EMPTY_REASONS: Record<string, string> = {
 
 const EvidenceList: React.FC<{ items: SkillEvidence[]; emptyReason?: string }> = ({ items, emptyReason = 'Not attempted' }) => items.length ? <ul className="comparison-evidence">{items.map((item, index) => <li key={`${item.attempt_id}-${index}`}>
   <a href={`#attempt-${item.attempt_id}`}>{item.criterion}</a><br />
-  <strong>{item.rating?.replaceAll('_', ' ') || (item.met === true ? 'Demonstrated' : item.met === false ? 'Needs attention' : 'Uncertain')}</strong> · {supportLabel(item.support_level)}
+  <SkillStatusPill rating={item.rating} met={item.met} /> · {supportLabel(item.support_level)}
   {item.evidence && <p>{item.evidence}</p>}
 </li>)}</ul> : <p className="muted-note">{emptyReason}</p>
 
@@ -63,7 +77,7 @@ export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; histor
       const reason = STAGE_EMPTY_REASONS[label] || 'Not attempted'
       return <div key={label}>
         <h5>{label}</h5>
-        {historical ? evidence.length ? <ul className="comparison-evidence">{evidence.map((item, index) => <li key={index}><strong>{item.rating?.replaceAll('_', ' ') || 'Uncertain'}</strong> · {supportLabel(item.support_level)}<p>{item.evidence || item.criterion}</p></li>)}</ul> : <p className="muted-note">{reason}</p> : <EvidenceList items={evidence} emptyReason={reason} />}
+        {historical ? evidence.length ? <ul className="comparison-evidence">{evidence.map((item, index) => <li key={index}><SkillStatusPill rating={item.rating} met={item.met} /> · {supportLabel(item.support_level)}<p>{item.evidence || item.criterion}</p></li>)}</ul> : <p className="muted-note">{reason}</p> : <EvidenceList items={evidence} emptyReason={reason} />}
       </div>
     })}</div>
     <p>{comparison.change_summary}</p>
@@ -73,10 +87,31 @@ export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; histor
 export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; onOpenSession?: (id: string) => void; onRetryAssessments?: () => void; retryDisabled?: boolean; messages?: Message[]; initialPrintMode?: 'summary' | 'full' }> = ({ report, onBack, onOpenSession, onRetryAssessments, retryDisabled, messages, initialPrintMode }) => {
   const [printMode, setPrintMode] = useState<'summary' | 'full'>(initialPrintMode || 'summary')
   const summary = report.session_summary
+  const isCompleted = report.journey_status === 'completed' || report.stage === 'completed'
 
   return <article className={`card report-card print-mode-${printMode}`} aria-labelledby="report-heading">
+    {/* Accessible Sticky Quick-Jump Section Tabs */}
+    <nav className="report-quick-jump-nav no-print" aria-label="Report sections">
+      <a href="#report-summary" className="quick-jump-tab">📊 Executive Summary</a>
+      <a href="#report-skills" className="quick-jump-tab">📈 Skill Comparison</a>
+      <a href="#report-evidence" className="quick-jump-tab">🔍 Evidence &amp; Appendix</a>
+    </nav>
+
+    {/* Celebratory Positive Completion Banner */}
+    {isCompleted && (
+      <div className="report-completion-banner card mb-4" role="status">
+        <div className="report-completion-header">
+          <span className="completion-emoji" aria-hidden="true">🎉</span>
+          <h3 className="completion-title">Learning Journey Completed!</h3>
+        </div>
+        <p className="completion-text">
+          You completed all 4 learning stages: Baseline Diagnostic, Tutoring Investigation, Supported Revision, and Fresh Transfer Challenge. Criteria ratings below reflect evidence gathered and remain provisional pending instructor review.
+        </p>
+      </div>
+    )}
+
     {/* Part A: Short Session Summary */}
-    <div className="report-header-banner">
+    <div className="report-header-banner" id="report-summary">
       <div className="report-badge-row">
         <span className={`outcome-status-badge outcome-${report.outcome}`}>
           {report.outcome === 'no_gap' ? 'NO GAP IN TESTED CASES'
@@ -198,13 +233,13 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
     </section>}
 
     {/* Part B: Compact Skill Comparison */}
-    <section className="report-evidence-section mb-4">
+    <section className="report-evidence-section mb-4" id="report-skills">
       <h3>Matched skills across cases</h3>
       {report.skill_comparisons?.length ? <SkillComparisons comparisons={report.skill_comparisons} /> : <p>No matched skill comparison is available for this older session. Its original evidence remains below.</p>}
     </section>
 
     {/* Part C: Expandable Detailed Evidence */}
-    <section className="report-evidence-section print-appendix print-hide-in-summary">
+    <section className="report-evidence-section print-appendix print-hide-in-summary" id="report-evidence">
       <h3>Detailed evidence & appendix</h3>
       <p className="muted-note no-print">Review original prompts, submitted reasoning, detailed criteria, and recorded support below.</p>
 

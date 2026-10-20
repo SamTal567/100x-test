@@ -331,6 +331,7 @@ export interface SessionReport {
   session_id: string
   concept_title: string
   stage: string
+  journey_status?: string
   outcome: 'gap_found' | 'no_gap' | 'inconclusive' | 'criteria_demonstrated'
   gaps: GapReport[]
   attempts: AttemptReport[]

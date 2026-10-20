@@ -17,13 +17,14 @@ global.sessionStorage = { getItem: key => storage.get(key) ?? null, setItem: (ke
 const { draftKey, pendingKey, readStored, writeStored, savedPending, safeResourceUrl, supportLabel } = require('../lib/sessionDrafts.ts')
 const { PresetDiagramView } = require('../components/PresetDiagramView.tsx')
 const { MessageContent } = require('../components/MessageContent.tsx')
-const { ReportView, AttemptView } = require('../components/ReportView.tsx')
+const { ReportView, AttemptView, SkillStatusPill } = require('../components/ReportView.tsx')
 const { StageProgressBar } = require('../components/StageProgressBar.tsx')
 const { SessionTranscript } = require('../components/SessionTranscript.tsx')
 const { DiagnosticFeedback } = require('../components/DiagnosticFeedback.tsx')
 const { HelpMenu } = require('../components/HelpMenu.tsx')
 const { AuthModal } = require('../components/AuthModal.tsx')
 const { AuthPage } = require('../pages/AuthPage.tsx')
+const { PromptView, EvaluationProgressLoader } = require('../pages/SessionPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
 test('focused tutoring excludes diagnostic submissions while the report retains them', () => {
@@ -1040,6 +1041,207 @@ test('legacy provider failure details never render as learner quotations or crit
   for (const html of [render(DiagnosticFeedback, { attempts: [attempt] }), render(AttemptView, { attempt })]) {
     assert.doesNotMatch(html, /<blockquote>|criterion-evidence-inline|criterion-evidence-text/)
     assert.ok(html.includes('Coverage unavailable'))
+  }
+})
+
+function sessionHarness(sessionData, reportData = null) {
+  const Module = require('node:module')
+  const listeners = new Map()
+  const oldStorage = global.localStorage
+  const oldWindow = global.window
+  const values = new Map()
+  global.localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+  global.window = {
+    addEventListener: (name, handler) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(handler) },
+    removeEventListener: (name, handler) => listeners.get(name)?.delete(handler),
+    dispatchEvent: event => { for (const handler of listeners.get(event.type) || []) handler(event) },
+    scrollTo: () => {},
+  }
+  const slots = []
+  const pendingEffects = []
+  let cursor = 0
+  let dirty = true
+  let tree
+  const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
+  const hooks = {
+    useState(initial) { const i = cursor++; if (!slots[i]) slots[i] = { value: typeof initial === 'function' ? initial() : initial }; return [slots[i].value, value => { slots[i].value = typeof value === 'function' ? value(slots[i].value) : value; dirty = true }] },
+    useRef(initial) { const i = cursor++; if (!slots[i]) slots[i] = { current: initial }; return slots[i] },
+    useCallback(fn, deps) { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { deps, value: fn }; return slots[i].value },
+    useEffect(fn, deps) { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) { const previous = slots[i]; slots[i] = { deps }; pendingEffects.push(() => { previous?.cleanup?.(); slots[i].cleanup = fn() }) } },
+  }
+  const filename = require.resolve('../pages/SessionPage.tsx')
+  const compiled = new Module(filename, module)
+  compiled.filename = filename
+  compiled.paths = module.paths
+  const mockApi = {
+    getSession: async () => sessionData,
+    getSessionReport: async () => reportData,
+    submitTurn: async () => ({ ...sessionData, stage: 'review', messages: [] }),
+  }
+  compiled.require = id => id === 'react' ? hooks : id === '../api/client' ? { api: mockApi, ApiError: Error }
+    : require(id)
+  compiled._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText, filename)
+  const renderSession = () => { cursor = 0; dirty = false; tree = compiled.exports.SessionPage({ sessionId: 's1', onBackToCatalogue: () => {} }); while (pendingEffects.length) pendingEffects.shift()() }
+  return {
+    async flush() { for (let i = 0; i < 20; i++) { if (dirty) renderSession(); await new Promise(resolve => setImmediate(resolve)); if (!dirty) return } },
+    toHtml() { return renderToStaticMarkup(tree) },
+    close() { for (const slot of slots) slot?.cleanup?.(); global.localStorage = oldStorage; global.window = oldWindow },
+  }
+}
+
+test('evaluation progress loader renders multi-step micro-feedback and animated pulse bar', () => {
+  const html = render(EvaluationProgressLoader, {})
+  assert.match(html, /class="card evaluation-loader-card/)
+  assert.match(html, /role="status"/)
+  assert.match(html, /aria-live="polite"/)
+  assert.match(html, /Saving your draft securely\.\.\./)
+  assert.match(html, /AI Tutor is analyzing your explanation &amp; criteria\.\.\./)
+  assert.match(html, /Synthesizing personalized feedback and follow-up probes\.\.\./)
+  assert.match(html, /evaluation-pulse-bar/)
+  assert.match(html, /evaluation-pulse-fill/)
+})
+
+test('prompt view splits scenario background and renders task inside distinct accent card', () => {
+  const promptWithTask = {
+    id: 'p-task',
+    case_type: 'baseline',
+    review_status: 'reviewed',
+    scenario_text: 'A cache holds items in memory before flush.\n\nTask: Explain what happens when the power is interrupted.',
+    assumptions: ['Server has 16GB RAM', 'Disk is NVMe SSD'],
+  }
+  const html = render(PromptView, { prompt: promptWithTask })
+  assert.match(html, /class="task-accent-card"/)
+  assert.match(html, /🎯/)
+  assert.match(html, /Your Task/)
+  assert.match(html, /Explain what happens when the power is interrupted\./)
+  assert.match(html, /A cache holds items in memory before flush\./)
+  assert.match(html, /class="scenario-assumptions scenario-assumptions-card"/)
+  assert.match(html, /class="assumption-checkmark"/)
+  assert.match(html, /Server has 16GB RAM/)
+  assert.match(html, /Disk is NVMe SSD/)
+
+  // When no Task: block exists, unbroken wall of text is avoided and standard text is rendered
+  const promptPlain = {
+    id: 'p-plain',
+    case_type: 'baseline',
+    review_status: 'authored',
+    scenario_text: 'Simple prompt without an explicit task label.',
+  }
+  const htmlPlain = render(PromptView, { prompt: promptPlain })
+  assert.doesNotMatch(htmlPlain, /task-accent-card/)
+  assert.match(htmlPlain, /Simple prompt without an explicit task label\./)
+})
+
+test('report view presents celebratory completion banner, quick-jump tabs, and visual skill status pills', () => {
+  const report = {
+    session_id: 's-comp',
+    concept_title: 'Storage & Persistence',
+    stage: 'completed',
+    outcome: 'criteria_demonstrated',
+    assessment_status: 'provisional',
+    outcome_reason: 'All criteria demonstrated independently.',
+    attempts: [],
+    interventions_used: [],
+    skill_comparisons: [
+      {
+        skill_id: 'durability',
+        label: 'Durable writes',
+        baseline: [{ attempt_id: 'a1', criterion: 'Durable writes', rating: 'demonstrated', met: true, support_level: 'independent' }],
+        revision: [{ attempt_id: 'a2', criterion: 'Durable writes', rating: 'partially_demonstrated', met: false, support_level: 'supported' }],
+        transfer: [{ attempt_id: 'a3', criterion: 'Durable writes', rating: 'not_addressed', met: false, support_level: 'independent' }],
+        change_summary: 'Demonstrated in baseline.',
+      },
+    ],
+  }
+  const html = render(ReportView, { report, onBack: () => {} })
+
+  // 1. Celebratory completion headline
+  assert.match(html, /class="report-completion-banner/)
+  assert.match(html, /🎉/)
+  assert.match(html, /Learning Journey Completed!/)
+  assert.match(html, /You completed all 4 learning stages: Baseline Diagnostic, Tutoring Investigation, Supported Revision, and Fresh Transfer Challenge\./)
+
+  // 2. Secondary integrity badges retained
+  assert.match(html, /Provisional AI assessment/)
+  assert.match(html, /PREPARED CRITERIA DEMONSTRATED/)
+
+  // 3. Accessible sticky quick-jump tabs
+  assert.match(html, /class="report-quick-jump-nav/)
+  assert.match(html, /href="#report-summary".*📊 Executive Summary/)
+  assert.match(html, /href="#report-skills".*📈 Skill Comparison/)
+  assert.match(html, /href="#report-evidence".*🔍 Evidence &amp; Appendix/)
+  assert.match(html, /id="report-summary"/)
+  assert.match(html, /id="report-skills"/)
+  assert.match(html, /id="report-evidence"/)
+
+  // 4. Visual skill status pills with color variants
+  assert.match(html, /skill-status-pill pill-green">demonstrated<\/span>/)
+  assert.match(html, /skill-status-pill pill-yellow">partially demonstrated<\/span>/)
+  assert.match(html, /skill-status-pill pill-gray">not addressed<\/span>/)
+})
+
+test('skill status pills style green for demonstrated, yellow for support/partial, and gray for unmet/not addressed', () => {
+  assert.match(render(SkillStatusPill, { rating: 'demonstrated' }), /pill-green/)
+  assert.match(render(SkillStatusPill, { rating: 'partially_demonstrated' }), /pill-yellow/)
+  assert.match(render(SkillStatusPill, { rating: 'demonstrated_with_support' }), /pill-yellow/)
+  assert.match(render(SkillStatusPill, { rating: 'not_addressed' }), /pill-gray/)
+  assert.match(render(SkillStatusPill, { rating: 'unmet' }), /pill-gray/)
+})
+
+test('tutoring chat renders prominent revision callout banner and retains skip revision details', async () => {
+  const session = {
+    id: 's-tutor',
+    stage: 'investigate',
+    concept_title: 'Storage & Persistence',
+    diagnostic_index: 0,
+    diagnostic_total: 1,
+    allowed_actions: ['answer_probe', 'continue'],
+    current_prompt: { id: 'p1', case_type: 'baseline', review_status: 'reviewed', scenario_text: 'Scenario text' },
+    messages: [
+      { id: 'm0', stage: 'investigate', role: 'learner', content: 'My earlier answer.' },
+      { id: 'm1', stage: 'investigate', role: 'tutor', content: 'What happens to the unwritten logs?' },
+    ],
+  }
+  const harness = sessionHarness(session)
+  try {
+    await harness.flush()
+    const html = harness.toHtml()
+    assert.match(html, /revision-progression-banner/)
+    assert.match(html, /💡 Ready to update your answer\?/)
+    assert.match(html, /You(?:'|&#x27;)ve explored this concept with your tutor\. Take what you learned and revise your baseline explanation!/)
+    assert.match(html, /Review and revise my answer →/)
+    assert.match(html, /<details class="skip-revision-details/)
+    assert.match(html, /Skip revision &amp; proceed to unfamiliar scenario/)
+    assert.match(html, /voice-dictation-helper-tip/)
+    assert.match(html, /Speak naturally\. Dictation appends to your draft so you can review and edit before sending\./)
+  } finally {
+    harness.close()
+  }
+})
+
+test('unfamiliar transfer case renders concept focus pill and helper note', async () => {
+  const session = {
+    id: 's-apply',
+    stage: 'apply',
+    concept_title: 'Storage & Persistence',
+    diagnostic_index: 0,
+    diagnostic_total: 1,
+    allowed_actions: ['submit_answer'],
+    current_prompt: { id: 'p-apply', case_type: 'transfer', review_status: 'reviewed', scenario_text: 'Price Cache Across Restart' },
+    messages: [],
+  }
+  const harness = sessionHarness(session)
+  try {
+    await harness.flush()
+    const html = harness.toHtml()
+    assert.match(html, /unfamiliar-case-banner/)
+    assert.match(html, /concept-focus-pill/)
+    assert.match(html, /Concept Focus: Storage &amp; Persistence/)
+    assert.match(html, /concept-focus-note/)
+    assert.match(html, /Apply the core principles you explored in the earlier cases to this new scenario\. Answer independently without hints\./)
+    assert.match(html, /voice-dictation-helper-tip/)
+  } finally {
+    harness.close()
   }
 })
 

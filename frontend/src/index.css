@@ -2976,3 +2976,416 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
   .session-topbar .stage-dot { width: 24px; height: 24px; font-size: .75rem; }
   .session-topbar .stage-label { font-size: .72rem; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Concept Check — UI/UX Polish Overhaul
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1. Multi-Step Micro-Feedback Loader During LLM Evaluations ── */
+
+.evaluation-loader-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+  position: relative;
+  overflow: hidden;
+}
+
+.evaluation-loader-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.evaluation-loader-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.evaluation-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.evaluation-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.evaluation-step.active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.evaluation-step.completed {
+  color: var(--color-success);
+}
+
+.evaluation-step .step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  border: 1px solid var(--border-light);
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+.evaluation-step.active .step-badge {
+  background: var(--color-primary);
+  color: #FFFFFF;
+  border-color: var(--color-primary);
+  animation: pulse-step-badge 1.8s infinite;
+}
+
+.evaluation-step.completed .step-badge {
+  background: #E8F5E9;
+  color: #1B7A32;
+  border-color: #81C784;
+}
+
+[data-theme="dark"] .evaluation-step.completed .step-badge {
+  background: #14281B;
+  color: #81C784;
+  border-color: #2E7D32;
+}
+
+@keyframes pulse-step-badge {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(21, 95, 160, 0.4); }
+  50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(21, 95, 160, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(21, 95, 160, 0); }
+}
+
+.evaluation-pulse-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-surface-alt);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  position: relative;
+}
+
+.evaluation-pulse-fill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-accent-mint) 50%, var(--color-primary) 100%);
+  background-size: 200% 100%;
+  border-radius: var(--radius-full);
+  animation: pulse-bar-move 2s ease-in-out infinite;
+}
+
+@keyframes pulse-bar-move {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ── 2. Prominent "Ready to Revise" Progression Callout ─────── */
+
+.revision-progression-banner {
+  background: linear-gradient(135deg, var(--bg-card) 0%, var(--color-primary-light) 100%);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+
+[data-theme="dark"] .revision-progression-banner {
+  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(88, 166, 255, 0.12) 100%);
+}
+
+.progression-callout-text h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.progression-callout-text p {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ── 3. Visual Separation of Scenario vs. "🎯 Your Task" ─────── */
+
+.task-accent-card {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface-alt);
+  border: 2px solid var(--color-primary);
+  border-left: 6px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+[data-theme="dark"] .task-accent-card {
+  background: #141F36;
+  border-color: var(--color-primary);
+  border-left: 6px solid var(--color-primary);
+}
+
+.task-accent-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.task-accent-icon {
+  font-size: 1.15rem;
+}
+
+.task-accent-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+}
+
+.task-accent-body {
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.scenario-assumptions-card {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.scenario-assumptions-header {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-2);
+}
+
+.scenario-assumptions-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.scenario-assumption-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-body);
+}
+
+.assumption-checkmark {
+  color: var(--color-success);
+  font-weight: 800;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+
+/* ── 4. Concept Focus Anchor in Unfamiliar Transfer Case ────── */
+
+.concept-focus-anchor {
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.concept-focus-pill {
+  display: inline-block;
+  padding: 3px 12px;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-bottom: var(--space-1);
+}
+
+[data-theme="dark"] .concept-focus-pill {
+  background: rgba(88, 166, 255, 0.15);
+  color: #79B8FF;
+  border-color: #58A6FF;
+}
+
+.concept-focus-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+/* ── 5. Positive Completion Headline & Quick-Jump Tabs ──────── */
+
+.report-completion-banner {
+  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(147, 213, 162, 0.2) 100%);
+  border: 2px solid var(--color-success);
+  border-left: 6px solid var(--color-success);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+
+[data-theme="dark"] .report-completion-banner {
+  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(78, 186, 111, 0.15) 100%);
+  border-color: #4EBA6F;
+}
+
+.report-completion-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.completion-emoji {
+  font-size: 1.4rem;
+}
+
+.completion-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--color-success);
+  margin: 0;
+}
+
+.completion-text {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-body);
+  margin: 0;
+}
+
+.report-quick-jump-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
+}
+
+.quick-jump-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.quick-jump-tab:hover,
+.quick-jump-tab:focus-visible {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+/* Visual Skill Status Pills */
+.skill-status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border-radius: var(--radius-full);
+  text-transform: capitalize;
+  line-height: 1.3;
+  border: 1px solid transparent;
+}
+
+.skill-status-pill.pill-green {
+  background: #E8F5E9;
+  color: #1B7A32;
+  border-color: #81C784;
+}
+
+[data-theme="dark"] .skill-status-pill.pill-green {
+  background: #14281B;
+  color: #81C784;
+  border-color: #2E7D32;
+}
+
+.skill-status-pill.pill-yellow {
+  background: #FFF8E1;
+  color: #B78103;
+  border-color: #FDD835;
+}
+
+[data-theme="dark"] .skill-status-pill.pill-yellow {
+  background: #2D2614;
+  color: #FFE082;
+  border-color: #F57F17;
+}
+
+.skill-status-pill.pill-gray {
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+  border-color: var(--border-light);
+}
+
+[data-theme="dark"] .skill-status-pill.pill-gray {
+  background: rgba(255, 255, 255, 0.05);
+  color: #8B949E;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* ── 6. Voice Dictation Helper Microcopy ─────────────────────── */
+
+.voice-input-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.voice-dictation-helper-tip {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  max-width: 320px;
+}
