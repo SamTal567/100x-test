@@ -40,17 +40,30 @@ const representativeFixture = {
     session_id: 'session-storage-demo-01',
     concept_title: 'Storage & Persistence',
     stage: 'completed',
-    outcome: 'criteria_demonstrated',
+    outcome: 'gap_found',
     outcome_reason:
-      'Your unfamiliar-case answer demonstrated all prepared criteria independently. Your revised answer also resolved the earlier uncertainty regarding buffer flush boundaries and synchronous disk synchronization. AI assessments remain provisional until human review.',
+      'Your unfamiliar-case answer demonstrated its prepared criteria independently. Durable write timing improved in a supported revision but was not independently rechecked. AI assessments remain provisional until human review.',
     assessment_status: 'provisional',
     session_summary: {
+      personal_summary: {
+        demonstrated: 'The baseline identified volatile memory correctly; the unfamiliar case demonstrated its prepared criteria independently.',
+        missing_or_incorrect: 'Initially incomplete: durable write boundary.',
+        changed_after_help: 'The supported revision explained the durable write boundary.',
+        needs_independent_checking: 'Retention beyond this session was not tested.',
+        recommended_next_step: 'No additional remediation is indicated by the tested criteria.',
+        initial_difficulties: 'Initially incomplete: durable write boundary.',
+        later_evidence: 'The supported revision explained durability; the unfamiliar case provided separate independent application evidence.',
+        remaining_gaps: 'Durable write timing improved with support and still needs an independent recheck.',
+        assessment_notices: '',
+        revision_note: 'The revision is supported evidence. Similarity to a tutor explanation does not establish independent learning.',
+        next_steps: ['Try a different prepared, unseen case focused on durable write timing; explain your reasoning independently.'],
+      },
       unfamiliar_case_summary:
         'Demonstrated dual-write consistency, idempotent key handling, and distributed compensation patterns independently on the object storage transfer case.',
       revised_reasoning_summary:
         'Addressed volatile memory buffering vulnerability by specifying synchronous write-ahead logging (fsync / WAL) before returning client acknowledgment.',
       unresolved_summary:
-        'All criteria across tested baseline, revision, and transfer cases demonstrated; AI assessments remain provisional until human verification.',
+        'Durable write timing was demonstrated with support but not independently rechecked; assessments remain provisional.',
       support_summary:
         '1 hint, 1 conceptual lesson explanation, and 1 concept guide consultation used during investigation.',
     },

@@ -247,7 +247,7 @@ class SessionService:
             elif turn.action == "retry_processing":
                 await self._retry_assessment(session, messages)
             elif turn.action == "clarify":
-                self._clarify(session, turn, messages)
+                await self._clarify(session, turn, messages)
             elif session.stage == "diagnostic":
                 session.diagnostic_index = self.db.query(Attempt).filter_by(session_id=session.id, stage="diagnostic").count()
                 cases = self._baseline_cases(session)
@@ -480,15 +480,28 @@ class SessionService:
         )
         self._message(session, messages, scenario_msg)
 
-    def _clarify(self, session, turn, messages):
+    async def _clarify(self, session, turn, messages):
         case = self.db.get(CasePrompt, session.current_prompt_id)
-        facts = "\n".join(f"- {a}" for a in case.assumptions or [])
-        text = "These are the prepared scenario assumptions:\n" + (facts or "Use only stated scenario facts; no additional assumptions are specified.")
-        if turn.text:
-            text += "\nIf these do not settle your question, state your interpretation in your answer. That uncertainty is preserved for review."
-        self._message(session, messages, text)
-        if session.stage == "investigate":
-            self._intervention(session, "clarification", "Prepared scenario assumptions", text)
+        # Only prior clarification turns for this exact prompt, never general
+        # tutoring, reference answers, private presets or a different case.
+        recent = self.db.query(TurnIdempotency).filter_by(session_id=session.id, state="complete").order_by(
+            TurnIdempotency.created_at.desc(), TurnIdempotency.client_turn_id.desc()).limit(40).all()
+        history = []
+        matching = [item for item in reversed(recent) if (item.request_payload or {}).get("action") == "clarify"
+            and (item.request_payload or {}).get("prompt_id") == case.id]
+        for item in matching[-4:]:
+            history.append({"role": "learner", "content": ((item.request_payload or {}).get("text") or "")[-2000:]})
+            for message in (item.response_snapshot or {}).get("messages", []):
+                if message.get("role") == "tutor" and message.get("provider_status", "complete") == "complete":
+                    history.append({"role": "tutor", "content": message.get("content", "")[-2000:]})
+        public_scenario, assumptions = case.scenario_text, list(case.assumptions or [])
+        self.db.commit()  # The question is already saved; release DB work before AI.
+        reply = await self.ai.clarify_scenario(scenario=public_scenario, assumptions=assumptions,
+            question=turn.text or "Please explain what this question is asking me to do.",
+            stage=session.stage, history=history)
+        self._message(session, messages, reply.message, reply.status)
+        self._intervention(session, "clarification", "AI scenario clarification", reply.message,
+            "delivered" if reply.status == "complete" else reply.status)
 
     def _intervention(self, session, kind, title, content, status="delivered", url=None):
         gap = self._gap(session)

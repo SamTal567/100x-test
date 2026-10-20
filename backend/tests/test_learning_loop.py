@@ -38,6 +38,9 @@ class PreparedProvider:
     async def tutor_conversation(self, **kwargs):
         return TutorResponse(message="Which step makes that data available after restart?", action_type=kwargs["action"])
 
+    async def clarify_scenario(self, **kwargs):
+        return TutorResponse(message="Explain the restart described in the scenario using its stated facts.", action_type="clarify")
+
 
 @pytest.fixture
 def loop():

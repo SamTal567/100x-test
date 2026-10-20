@@ -27,6 +27,44 @@ const { AuthPage } = require('../pages/AuthPage.tsx')
 const { PromptView, EvaluationProgressLoader } = require('../pages/SessionPage.tsx')
 const render = (Component, props) => renderToStaticMarkup(React.createElement(Component, props))
 
+test('report separates initial difficulties, later evidence and current gaps without repeated overview', () => {
+  const report = { session_id: 'progress', concept_title: 'Entities', stage: 'completed', outcome: 'inconclusive',
+    assessment_status: 'provisional', outcome_reason: 'Some assessment is unavailable.', attempts: [], gaps: [], interventions_used: [],
+    session_summary: { unfamiliar_case_summary: 'Duplicate overview text', personal_summary: {
+      demonstrated: 'Stable identities and attributes on the fresh case.', missing_or_incorrect: 'Old combined text',
+      changed_after_help: 'A supported revision.', needs_independent_checking: 'History needs checking.',
+      recommended_next_step: 'Old single next step', initial_difficulties: 'Initially omitted: entity attributes.',
+      later_evidence: 'Entity attributes: independently demonstrated on the unfamiliar case.', remaining_gaps: 'History reference needs a fresh case.',
+      assessment_notices: 'One assessment unavailable.', revision_note: 'The revision is supported evidence.',
+      next_steps: ['Try an unseen history case.', 'Separately, retry the unavailable assessment.'],
+    } } }
+  const html = render(ReportView, { report })
+  const main = html.slice(0, html.indexOf('Detailed evidence &amp; appendix'))
+  assert.match(main, /Initial difficulties/)
+  assert.match(main, /Later evidence/)
+  assert.match(main, /Still unresolved/)
+  assert.match(main, /Try an unseen history case/)
+  assert.match(main, /Separately, retry the unavailable assessment/)
+  assert.doesNotMatch(main, /Duplicate overview text|Old combined text|Old single next step/)
+  assert.match(html, /The revision is supported evidence/)
+})
+
+test('compact skill table shows unavailable evidence and keeps detailed quotes in appendix', () => {
+  const report = { session_id: 'compact', concept_title: 'Entities', stage: 'completed', outcome: 'inconclusive',
+    assessment_status: 'provisional', outcome_reason: 'Partial evidence', attempts: [], gaps: [], interventions_used: [],
+    skill_comparisons: [{ skill_id: 'identity', label: 'Entity identity', review_status: 'provisional', change_summary: 'Evidence remains provisional.',
+      baseline: [{ attempt_id: 'a', criterion: 'Stable ID', met: null, rating: 'technical_failure', evidence: 'DETAILED EVIDENCE MARKER' }],
+      revision: [], transfer: [{ attempt_id: 'b', criterion: 'Stable ID', met: true, rating: 'demonstrated', support_level: 'independent' }],
+    }] }
+  const html = render(ReportView, { report })
+  const main = html.slice(0, html.indexOf('Detailed evidence &amp; appendix'))
+  assert.match(main, /aria-label="Skill comparison summary"/)
+  assert.match(main, /1 unavailable/)
+  assert.match(main, /1\/1 demonstrated/)
+  assert.doesNotMatch(main, /DETAILED EVIDENCE MARKER/)
+  assert.match(html.slice(main.length), /DETAILED EVIDENCE MARKER/)
+})
+
 test('tutor focus pairs an exact source quote with its own question for the current case', () => {
   const { getTutorFocus } = require('../lib/learningEvidence.ts')
   const attempts = [{ id: 'a', case_prompt_id: 'case-a', answer_text: 'I think RAM persists. It is safe.' },
@@ -982,7 +1020,7 @@ test('diagnostic and report preserve required-part coverage, omissions and usefu
   }
 })
 
-test('report shows requested-part coverage before its collapsed evidence appendix', () => {
+test('report keeps detailed requested-part coverage inside its evidence appendix', () => {
   const report = { session_id: 'overview', concept_title: 'Storage', stage: 'completed', outcome: 'inconclusive', outcome_reason: 'Evidence is incomplete', gaps: [], interventions_used: [], assessment_status: 'provisional', attempts: [{
     id: 'unanswered-part', stage: 'apply', case_type: 'transfer', scenario_text: 'Explain recovery.', answer_text: 'Storage persists.', support_level: 'independent', criteria: [],
     question_parts: [{ part_id: 'recover', description: 'Explain recovering the answer after restart' }], question_parts_coverage: [{ question_part_id: 'recover', coverage: 'unanswered', issue_type: 'missing_requested_part', explanation: 'The restart part was omitted.', evidence: '' }],
@@ -990,8 +1028,8 @@ test('report shows requested-part coverage before its collapsed evidence appendi
   const html = render(ReportView, { report })
   const overview = html.indexOf('Explain recovering the answer after restart')
   const appendix = html.indexOf('Detailed evidence &amp; appendix')
-  assert.ok(overview >= 0 && overview < appendix)
-  assert.ok(html.slice(0, appendix).includes('Unanswered'))
+  assert.ok(overview >= 0 && overview > appendix)
+  assert.ok(html.slice(appendix).includes('Unanswered'))
 })
 
 test('another account cannot restore a stored session selection from the previous account', async () => {

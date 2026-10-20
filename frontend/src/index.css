@@ -3398,3 +3398,26 @@ dialog.drawer-backdrop::backdrop { background: rgba(0, 0, 0, .45); }
 .tutor-focus-question > strong { display: block; font-size: .85rem; }
 .report-stage-evidence { padding-left: var(--space-5); margin: var(--space-3) 0; }
 .report-stage-evidence li { margin-bottom: var(--space-2); overflow-wrap: anywhere; }
+
+/* Concise report by default; detailed evidence remains in the appendix. */
+.report-next-steps { padding-left: var(--space-5); margin: var(--space-2) 0; }
+.report-next-steps li { margin-bottom: var(--space-2); }
+.report-assessment-notice { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border-light); }
+.report-skill-summary-wrap { overflow-x: auto; }
+.report-skill-summary { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.report-skill-summary th, .report-skill-summary td { padding: var(--space-3); border: 1px solid var(--border-light); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.report-skill-summary thead { background: var(--bg-surface-alt); }
+.report-skill-summary small { display: block; margin-top: var(--space-1); color: var(--text-muted); }
+@media print {
+  .report-skill-summary-wrap { overflow: visible !important; }
+  .report-skill-summary { width: 100%; table-layout: fixed; font-size: 9pt; }
+  .report-skill-summary th, .report-skill-summary td { padding: 5pt; }
+  .report-skill-summary thead { display: table-header-group; }
+  .print-mode-full .comparison-columns, .print-mode-full .criteria-table,
+  .print-mode-full .summary-grid-cards, .print-mode-full .personal-summary-grid { display: block !important; }
+  .print-mode-full .comparison-columns > div { margin-bottom: 8pt; }
+  .print-mode-full .comparison-card, .print-mode-full .attempt-card,
+  .print-mode-full .report-detail-accordion > div,
+  .report-summary-grid, .report-personal-summary { break-inside: auto !important; page-break-inside: auto !important; }
+  .report-detail-accordion > div > p:last-child { break-before: avoid; page-break-before: avoid; }
+}

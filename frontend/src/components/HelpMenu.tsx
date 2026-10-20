@@ -58,7 +58,7 @@ export const HelpMenu: React.FC<HelpMenuProps> = ({
     {
       key: 'clarify',
       title: 'Ask about the scenario',
-      sub: 'Clarify stated assumptions or setup facts',
+      sub: 'Ask AI to explain the wording or stated facts',
       icon: '❓',
       available: canClarify,
     },

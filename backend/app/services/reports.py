@@ -3,6 +3,7 @@ from sqlalchemy import desc
 from app.db.models import Attempt, CasePrompt, Concept, CriterionAssessment, Gap, Intervention, Session
 from app.schemas import AttemptReport, GapReport, SessionReport
 from app.services.evidence import snapshot_case
+from app.services.report_progress import learning_progress
 
 
 def check_unprompted(criterion_name, skill_id, scenario_text, assumptions, rubric_criterion=None):
@@ -544,6 +545,9 @@ def build_report(db, session, include_history=True):
         "needs_independent_checking": personal_needs_checking,
         "recommended_next_step": personal_next_step,
     }
+    personal_summary.update(learning_progress(reports,
+        {a.id: (a.case_snapshot or {}).get("rubric", {}).get("criteria", []) for a in attempts},
+        transfer_is_independent))
 
     # Build concern_cards
     # For each significant concern (unmet, partial, or unclear criteria in baseline or transfer):

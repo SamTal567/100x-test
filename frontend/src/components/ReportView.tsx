@@ -61,7 +61,7 @@ export const SkillStatusPill: React.FC<{ rating?: string | null; met?: boolean |
 
 const STAGE_EMPTY_REASONS: Record<string, string> = {
   Baseline: 'Not asked in this case',
-  'Revision with support': 'Not attempted (revision skipped)',
+  'Revision with support': 'Not assessed in the submitted revision',
   'Fresh case': 'Not rechecked in fresh case',
 }
 
@@ -84,6 +84,24 @@ export const SkillComparisons: React.FC<{ comparisons: SkillComparison[]; histor
     <p>{comparison.change_summary}</p>
   </section>)}
 </div>
+
+const SkillComparisonTable: React.FC<{ comparisons: SkillComparison[] }> = ({ comparisons }) => {
+  const cell = (items: SkillEvidence[]) => {
+    if (!items.length) return <span className="text-muted">Not checked</span>
+    const met = items.filter(item => item.met === true && item.rating !== 'technical_failure').length
+    const unavailable = items.filter(item => item.rating === 'technical_failure').length
+    const unclear = items.filter(item => item.met == null && item.rating !== 'technical_failure').length
+    return <><span>{met}/{items.length} demonstrated</span>
+      {unavailable > 0 && <span className="muted-note"> · {unavailable} unavailable</span>}
+      {unclear > 0 && <span className="muted-note"> · {unclear} unclear</span>}
+      <small>{[...new Set(items.map(item => supportLabel(item.support_level)))].join(' · ')}</small></>
+  }
+  return <div className="report-skill-summary-wrap"><table className="report-skill-summary" aria-label="Skill comparison summary">
+    <thead><tr><th scope="col">Skill</th><th scope="col">Baseline</th><th scope="col">Revision</th><th scope="col">Fresh case</th></tr></thead>
+    <tbody>{comparisons.map(comparison => <tr key={comparison.skill_id}><th scope="row">{comparison.label}</th>
+      <td>{cell(comparison.baseline)}</td><td>{cell(comparison.revision)}</td><td>{cell(comparison.transfer)}</td></tr>)}</tbody>
+  </table></div>
+}
 
 export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; onOpenSession?: (id: string) => void; onRetryAssessments?: () => void; retryDisabled?: boolean; messages?: Message[]; initialPrintMode?: 'summary' | 'full' }> = ({ report, onBack, onOpenSession, onRetryAssessments, retryDisabled, messages, initialPrintMode }) => {
   const [printMode, setPrintMode] = useState<'summary' | 'full'>(initialPrintMode || 'summary')
@@ -138,24 +156,72 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
           <p>{summary.personal_summary.demonstrated}</p>
         </div>
         <div className="summary-point-card personal-summary-card">
-          <span className="summary-point-label">Missing or incorrect</span>
-          <p>{summary.personal_summary.missing_or_incorrect}</p>
+          <span className="summary-point-label">{summary.personal_summary.initial_difficulties ? 'Initial difficulties' : 'Assessment findings'}</span>
+          <p>{summary.personal_summary.initial_difficulties || summary.personal_summary.missing_or_incorrect}</p>
         </div>
         <div className="summary-point-card personal-summary-card">
-          <span className="summary-point-label">Changed after help</span>
-          <p>{summary.personal_summary.changed_after_help}</p>
+          <span className="summary-point-label">Later evidence</span>
+          <p>{summary.personal_summary.later_evidence || summary.personal_summary.changed_after_help}</p>
+          {summary.personal_summary.revision_note && <p className="muted-note">{summary.personal_summary.revision_note}</p>}
         </div>
         <div className="summary-point-card personal-summary-card">
-          <span className="summary-point-label">Needs independent checking</span>
-          <p>{summary.personal_summary.needs_independent_checking}</p>
+          <span className="summary-point-label">Still unresolved</span>
+          <p>{summary.personal_summary.remaining_gaps || summary.personal_summary.needs_independent_checking}</p>
+          {summary.personal_summary.assessment_notices && <p className="report-assessment-notice"><strong>Assessment notice:</strong> {summary.personal_summary.assessment_notices}</p>}
         </div>
         <div className="summary-point-card personal-summary-card">
-          <span className="summary-point-label">Recommended next step</span>
-          <p>{summary.personal_summary.recommended_next_step}</p>
+          <span className="summary-point-label">Next steps</span>
+          {summary.personal_summary.next_steps?.length ? <ol className="report-next-steps">{summary.personal_summary.next_steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
+            : <p>{summary.personal_summary.recommended_next_step}</p>}
         </div>
+      </div>
+      {summary.support_summary && <p className="muted-note">Support recorded: {summary.support_summary}</p>}
+    </section>}
+
+    {/* 2. Session Overview (Unfamiliar case, Revised reasoning, etc.) */}
+    {!summary?.personal_summary && summary && (summary.unfamiliar_case_summary || summary.revised_reasoning_summary || summary.unresolved_summary || summary.support_summary) && <section className="report-summary-grid card-flat mb-4" aria-label="Session summary findings">
+      <h3 className="section-subtitle">Session overview</h3>
+      <div className="summary-grid-cards">
+        {summary.unfamiliar_case_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Unfamiliar case</span>
+          <p>{summary.unfamiliar_case_summary}</p>
+        </div>}
+        {summary.revised_reasoning_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Revised reasoning</span>
+          <p>{summary.revised_reasoning_summary}</p>
+        </div>}
+        {summary.unresolved_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Unresolved / unassessed</span>
+          <p>{summary.unresolved_summary}</p>
+        </div>}
+        {summary.support_summary && <div className="summary-point-card">
+          <span className="summary-point-label">Support used</span>
+          <p>{summary.support_summary}</p>
+        </div>}
       </div>
     </section>}
 
+    <p className="report-disclaimer-box">Evidence reflects the cases attempted and the support received. A short session does not establish complete mastery or prove that tutoring caused a change. Authored cases remain unreviewed until a person reviews them.</p>
+
+    {onRetryAssessments && report.attempts.some(attempt => !attempt.criteria.length || attempt.criteria.some(criterion => criterion.rating === 'technical_failure')) && <section className="card-flat recovery-card mb-4 no-print" aria-label="Assessment recovery">
+      <strong>Some saved answers could not be assessed</strong>
+      <p>Retry assessment of those saved answers. This keeps the learner’s original submissions and preserves human-reviewed judgments.</p>
+      <button type="button" className="btn btn-secondary" disabled={retryDisabled} onClick={onRetryAssessments}>Retry unavailable assessments</button>
+    </section>}
+
+    {/* Part B: Compact Skill Comparison */}
+    <section className="report-evidence-section mb-4" id="report-skills">
+      <h3>Matched skills across cases</h3>
+      {report.skill_comparisons?.length ? <SkillComparisonTable comparisons={report.skill_comparisons} /> : <p>No matched skill comparison is available for this older session. Its original evidence remains below.</p>}
+    </section>
+
+    {/* Part C: Expandable Detailed Evidence */}
+    <section className="report-evidence-section print-appendix print-hide-in-summary" id="report-evidence">
+      <h3>Detailed evidence & appendix</h3>
+      <p className="muted-note no-print">Review original prompts, submitted reasoning, detailed criteria, and recorded support below.</p>
+
+      {summary?.personal_summary && <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>
+        <summary className="detail-accordion-title">Additional session overview</summary>
     {/* 2. Session Overview (Unfamiliar case, Revised reasoning, etc.) */}
     {summary && (summary.unfamiliar_case_summary || summary.revised_reasoning_summary || summary.unresolved_summary || summary.support_summary) && <section className="report-summary-grid card-flat mb-4" aria-label="Session summary findings">
       <h3 className="section-subtitle">Session overview</h3>
@@ -179,6 +245,9 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
       </div>
     </section>}
 
+      </details>}
+      <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>
+        <summary className="detail-accordion-title">Detailed question coverage and original concerns</summary>
     {report.attempts.some(attempt => attempt.stage !== 'practice' && attempt.question_parts?.some(part => !part.supplementary)) && <section className="report-part-coverage card-flat mb-4" aria-label="Question-part coverage overview">
       <h3 className="section-subtitle">Question-part coverage</h3>
       {report.attempts.filter(attempt => attempt.stage !== 'practice' && attempt.question_parts?.some(part => !part.supplementary)).map((attempt, index) => <div key={attempt.id}>
@@ -226,24 +295,11 @@ export const ReportView: React.FC<{ report: SessionReport; onBack: () => void; o
       </div>
     </section>}
 
-    <p className="report-disclaimer-box">Evidence reflects the cases attempted and the support received. A short session does not establish complete mastery or prove that tutoring caused a change. Authored cases remain unreviewed until a person reviews them.</p>
-
-    {onRetryAssessments && report.attempts.some(attempt => !attempt.criteria.length || attempt.criteria.some(criterion => criterion.rating === 'technical_failure')) && <section className="card-flat recovery-card mb-4 no-print" aria-label="Assessment recovery">
-      <strong>Some saved answers could not be assessed</strong>
-      <p>Retry assessment of those saved answers. This keeps the learner’s original submissions and preserves human-reviewed judgments.</p>
-      <button type="button" className="btn btn-secondary" disabled={retryDisabled} onClick={onRetryAssessments}>Retry unavailable assessments</button>
-    </section>}
-
-    {/* Part B: Compact Skill Comparison */}
-    <section className="report-evidence-section mb-4" id="report-skills">
-      <h3>Matched skills across cases</h3>
-      {report.skill_comparisons?.length ? <SkillComparisons comparisons={report.skill_comparisons} /> : <p>No matched skill comparison is available for this older session. Its original evidence remains below.</p>}
-    </section>
-
-    {/* Part C: Expandable Detailed Evidence */}
-    <section className="report-evidence-section print-appendix print-hide-in-summary" id="report-evidence">
-      <h3>Detailed evidence & appendix</h3>
-      <p className="muted-note no-print">Review original prompts, submitted reasoning, detailed criteria, and recorded support below.</p>
+      </details>
+      {Boolean(report.skill_comparisons?.length) && <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>
+        <summary className="detail-accordion-title">Matched skill evidence and quotations</summary>
+        <SkillComparisons comparisons={report.skill_comparisons!} />
+      </details>}
 
       {/* Stage Progress Breakdown (Moved from Primary View to Appendix) */}
       {Boolean(report.stage_summaries?.length) && <details className="card-flat report-detail-accordion mb-3" open={printMode === 'full'}>
